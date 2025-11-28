@@ -2,9 +2,6 @@ package dev.lockedfog.streamllm.provider
 
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.model.StreamingResponseHandler
-import dev.langchain4j.model.chat.ChatLanguageModel
-import dev.langchain4j.model.chat.StreamingChatLanguageModel
-import dev.langchain4j.model.input.Prompt
 import dev.langchain4j.model.openai.OpenAiChatModel
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel
 import dev.langchain4j.model.output.Response

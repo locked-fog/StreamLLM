@@ -82,7 +82,7 @@ class StreamScope {
             Thread.sleep(10)
         }
     ):String {
-        return this.ask(options = options, onToken = block)
+        return this.ask(promptTemplate = promptTemplate, options = options, onToken = block)
     }
 
     suspend inline fun <reified T> String.to(): T{

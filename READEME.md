@@ -1,6 +1,6 @@
 # StreamLLM
 
-[![](https://jitpack.io/v/LockedFog/StreamLLM.svg)](https://jitpack.io/#LockedFog/StreamLLM)
+[![](https://jitpack.io/v/locked-fog/StreamLLM.svg)](https://jitpack.io/#locked-fog/StreamLLM)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **StreamLLM** 是一个专为 Kotlin (JVM/Android) 开发者设计的轻量级 LLM 工作流编排库。它基于 LangChain4j，提供了一套极具表现力的 DSL，让你像写脚本一样编写 AI 逻辑。
