@@ -1,6 +1,5 @@
 package dev.lockedfog.streamllm.core
 
-import retrofit2.http.Query
 
 class MemoryManager {
     private val messages = mutableListOf<MessageEntry>()

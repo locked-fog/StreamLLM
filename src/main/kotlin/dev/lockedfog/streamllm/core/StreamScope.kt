@@ -16,13 +16,9 @@ class StreamScope {
 
         // 1. 处理模版
         val currentInput = if (promptTemplate.isBlank()) this else promptTemplate.replace("{{it}}", this)
-        val finalPrompt = memory.buildPrompt(currentInput)
 
         // 2. 调用 Provider
-        val response = provider.chat(finalPrompt, options, onToken)
-
-        memory.addMessage("User",currentInput)
-        memory.addMessage("LLM",response)
+        val response = provider.chat(currentInput, options, onToken)
 
         return response
     }
@@ -118,7 +114,6 @@ class StreamScope {
 
                 val fixPrompt = "Previous JSON invalid: ${e.message}. Return ONLY JSON.\nOriginal: $currentResponse"
 
-                // 绕过 Memory，直接调用 Provider
                 currentResponse = StreamLLM.defaultProvider!!.chat(fixPrompt, fixOptions)
             }
         }
