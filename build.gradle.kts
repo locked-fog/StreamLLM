@@ -22,7 +22,7 @@ dependencies {
     implementation("org.slf4j:slf4j-simple:2.0.17")
 
 
-    val ktorVersion = "2.3.13"
+    val ktorVersion = "3.3.2"
     implementation("io.ktor:ktor-client-core:$ktorVersion")
     implementation("io.ktor:ktor-client-okhttp:$ktorVersion")
     implementation("io.ktor:ktor-client-content-negotiation:${ktorVersion}")
