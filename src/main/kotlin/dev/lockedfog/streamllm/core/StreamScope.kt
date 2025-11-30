@@ -1,3 +1,5 @@
+@file:Suppress("unused")
+
 package dev.lockedfog.streamllm.core
 
 import dev.lockedfog.streamllm.StreamLLM
@@ -163,7 +165,7 @@ class StreamScope {
         return this.ask(promptTemplate, strategy, historyWindow, system, formatter, options, block)
     }
 
-    suspend inline fun <reified T> String.to(): T {
+    inline fun <reified T> String.to(): T {
         val jsonString = JsonSanitizer.sanitize(this)
         return try {
             StreamLLM.json.decodeFromString<T>(jsonString)

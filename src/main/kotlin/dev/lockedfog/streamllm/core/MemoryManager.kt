@@ -13,6 +13,7 @@ data class ChatMessage(val role: String, val content: String)
 /**
  * 记忆策略枚举
  */
+@Suppress("unused")
 enum class MemoryStrategy {
     ReadWrite, // (默认) 读取历史上下文，并将本次对话写入记忆
     ReadOnly,  // 仅读取历史作为上下文，不记录本次对话
