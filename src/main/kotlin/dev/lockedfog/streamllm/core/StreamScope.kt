@@ -25,13 +25,11 @@ class StreamScope {
 
     suspend fun String.ask(
         promptTemplate: String = "",
-        // 展平的参数
         temperature: Double? = null,
         topP: Double? = null,
         maxTokens: Int? = null,
         model: String? = null,
         stop: List<String>? = null,
-        // 回调
         onToken: ((String) -> Unit)? = null
     ): String {
         // 自动组装

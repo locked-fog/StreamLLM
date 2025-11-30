@@ -1,7 +1,7 @@
 package dev.lockedfog.streamllm
 
-import dev.lockedfog.streamllm.provider.LangChainAdapter
 import dev.lockedfog.streamllm.provider.LlmProvider
+import dev.lockedfog.streamllm.provider.openai.OpenAiClient
 import kotlinx.serialization.json.Json
 import java.time.Duration
 
@@ -20,11 +20,11 @@ object StreamLLM {
     }
 
     fun init(baseUrl: String, apiKey: String, modelName: String, timeoutSeconds: Long = 60) {
-        val adapter = LangChainAdapter(
+        val adapter = OpenAiClient(
             baseUrl = baseUrl,
             apiKey = apiKey,
-            defaultModelName = modelName,
-            defaultTimeout = Duration.ofSeconds(timeoutSeconds)
+            defaultModel = modelName,
+            timeout = Duration.ofSeconds(timeoutSeconds)
         )
 
         this.init(adapter)
