@@ -1,5 +1,6 @@
 package dev.lockedfog.streamllm
 
+import dev.lockedfog.streamllm.core.MemoryManager
 import dev.lockedfog.streamllm.provider.LlmProvider
 import dev.lockedfog.streamllm.provider.openai.OpenAiClient
 import kotlinx.serialization.json.Json
@@ -11,6 +12,8 @@ object StreamLLM {
         isLenient = true
         encodeDefaults = true
     }
+
+    val memory = MemoryManager()
 
     @Volatile
     var defaultProvider: LlmProvider? = null

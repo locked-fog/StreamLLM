@@ -32,11 +32,20 @@ data class OpenAiChatResponse(
 // --- 响应包 (Chunk - 流式) ---
 @Serializable
 data class OpenAiStreamChunk(
-    val choices: List<StreamChoice>
+    val choices: List<StreamChoice>? = null, // 修改为可空，因为 Usage 包或错误包可能不包含 choices
+    val error: OpenAiError? = null           // 新增错误字段，用于捕获流式过程中的错误
 ) {
     @Serializable
     data class StreamChoice(val delta: Delta)
 
     @Serializable
-    data class Delta(val content: String? = null) // 流式返回可能没有 content
+    data class Delta(val content: String? = null)
 }
+
+// --- 错误对象 ---
+@Serializable
+data class OpenAiError(
+    val message: String,
+    val type: String? = null,
+    val code: String? = null
+)

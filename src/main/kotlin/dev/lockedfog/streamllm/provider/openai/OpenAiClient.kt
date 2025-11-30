@@ -1,5 +1,6 @@
 package dev.lockedfog.streamllm.provider.openai
 
+import dev.lockedfog.streamllm.core.ChatMessage
 import dev.lockedfog.streamllm.core.GenerationOptions
 import dev.lockedfog.streamllm.provider.LlmProvider
 import io.ktor.client.*
@@ -14,6 +15,7 @@ import io.ktor.utils.io.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 import java.time.Duration
 
 class OpenAiClient(
@@ -22,6 +24,8 @@ class OpenAiClient(
     private val defaultModel: String,
     timeout: Duration = Duration.ofSeconds(60)
 ) : LlmProvider {
+
+    private val logger = LoggerFactory.getLogger(OpenAiClient::class.java)
 
     // 配置 Ktor Client
     private val client = HttpClient(OkHttp) {
@@ -44,10 +48,13 @@ class OpenAiClient(
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
     // --- 统一构建请求体 ---
-    private fun createRequest(prompt: String, stream: Boolean, options: GenerationOptions?): OpenAiChatRequest {
+    private fun createRequest(messages: List<ChatMessage>, stream: Boolean, options: GenerationOptions?): OpenAiChatRequest {
+        // 将通用的 ChatMessage 转换为 OpenAiMessage
+        val openAiMessages = messages.map { OpenAiMessage(it.role, it.content) }
+
         return OpenAiChatRequest(
             model = options?.modelNameOverride ?: defaultModel,
-            messages = listOf(OpenAiMessage("user", prompt)), // 这里简化了，实际应该对接 MemoryManager
+            messages = openAiMessages,
             stream = stream,
             temperature = options?.temperature,
             topP = options?.topP,
@@ -58,14 +65,14 @@ class OpenAiClient(
 
     // --- 实现 Chat (非流式) ---
     override suspend fun chat(
-        prompt: String,
+        messages: List<ChatMessage>,
         options: GenerationOptions?,
         onToken: ((String) -> Unit)?
     ): String {
         // 如果有回调，自动切换到流式模式
         if (onToken != null) {
             val sb = StringBuilder()
-            stream(prompt, options).collect { token ->
+            stream(messages, options).collect { token ->
                 onToken(token)
                 sb.append(token)
             }
@@ -73,50 +80,82 @@ class OpenAiClient(
         }
 
         // 普通请求
-        val requestBody = createRequest(prompt, stream = false, options)
+        val requestBody = createRequest(messages, stream = false, options)
 
-        val response = client.post("$baseUrl/chat/completions") { // 注意：有些 base url 可能自带 /chat/completions，需要适配
+        val response = client.post("$baseUrl/chat/completions") {
             header("Authorization", "Bearer $apiKey")
             contentType(ContentType.Application.Json)
             setBody(requestBody)
-        }.body<OpenAiChatResponse>()
+        }
 
-        return response.choices.firstOrNull()?.message?.content ?: ""
+        if (!response.status.isSuccess()) {
+            val errorBody = response.bodyAsText()
+            logger.error("Chat Request Failed [{}]: {}", response.status, errorBody)
+            throw IllegalStateException("Chat request failed: ${response.status} - $errorBody")
+        }
+
+        val chatResponse = response.body<OpenAiChatResponse>()
+        return chatResponse.choices.firstOrNull()?.message?.content ?: ""
     }
 
-    // --- 实现 Stream (流式 - 核心难点) ---
-    override fun stream(prompt: String, options: GenerationOptions?): Flow<String> = flow {
-        val requestBody = createRequest(prompt, stream = true, options)
+    // --- 实现 Stream (流式) ---
+    override fun stream(messages: List<ChatMessage>, options: GenerationOptions?): Flow<String> = flow {
+        val requestBody = createRequest(messages, stream = true, options)
 
-        client.preparePost("$baseUrl/chat/completions") {
-            header("Authorization", "Bearer $apiKey")
-            header("Accept", "text/event-stream")
-            header("Cache-Control", "no-cache")
-            contentType(ContentType.Application.Json)
-            setBody(requestBody)
-        }.execute { httpResponse ->
-            val channel: ByteReadChannel = httpResponse.bodyAsChannel()
+        try {
+            client.preparePost("$baseUrl/chat/completions") {
+                header("Authorization", "Bearer $apiKey")
+                header("Accept", "text/event-stream")
+                header("Cache-Control", "no-cache")
+                contentType(ContentType.Application.Json)
+                setBody(requestBody)
+            }.execute { httpResponse ->
+                // 1. 检查 HTTP 状态码
+                if (!httpResponse.status.isSuccess()) {
+                    val errorBody = httpResponse.bodyAsText()
+                    logger.error("❌ Stream API Error [{}]: {}", httpResponse.status, errorBody)
+                    throw IllegalStateException("Stream request failed: ${httpResponse.status} - $errorBody")
+                }
 
-            while (!channel.isClosedForRead) {
-                val line = channel.readUTF8Line() ?: break
+                val channel: ByteReadChannel = httpResponse.bodyAsChannel()
 
-                // SSE 格式解析: "data: {JSON}"
-                if (line.startsWith("data:")) {
-                    val data = line.removePrefix("data:").trim()
-                    if (data == "[DONE]") break // 结束标志
-                    if (data.isBlank()) continue
+                while (!channel.isClosedForRead) {
+                    val line = channel.readUTF8Line() ?: break
 
-                    try {
-                        val chunk = jsonParser.decodeFromString<OpenAiStreamChunk>(data)
-                        val content = chunk.choices.firstOrNull()?.delta?.content
-                        if (!content.isNullOrEmpty()) {
-                            emit(content) // 发送给 Flow
+                    // SSE 格式解析: "data: {JSON}"
+                    if (line.startsWith("data:")) {
+                        val data = line.removePrefix("data:").trim()
+                        if (data == "[DONE]") break // 结束标志
+                        if (data.isBlank()) continue
+
+                        try {
+                            val chunk = jsonParser.decodeFromString<OpenAiStreamChunk>(data)
+
+                            // 2. 检查是否有业务错误
+                            if (chunk.error != null) {
+                                logger.error("⚠️ Stream API Error: {}", chunk.error.message)
+                                throw IllegalStateException("Stream API Error: ${chunk.error.message}")
+                            }
+
+                            // 3. 正常提取内容
+                            val content = chunk.choices?.firstOrNull()?.delta?.content
+                            if (!content.isNullOrEmpty()) {
+                                emit(content) // 发送给 Flow
+                            }
+                        } catch (e: Exception) {
+                            logger.debug("⚠️ JSON Parse Warning: {} | Data: {}", e.message, data)
                         }
-                    } catch (e: Exception) {
-                        // 忽略解析错误（比如 keep-alive 包）
+                    }
+                    // 兼容非 SSE 格式的错误返回
+                    else if (line.trim().startsWith("{") && line.contains("\"error\"")) {
+                        logger.error("❌ Raw JSON Error in stream: {}", line)
+                        throw IllegalStateException("Raw JSON Error: $line")
                     }
                 }
             }
+        } catch (e: Exception) {
+            logger.error("🚨 Stream Request Exception: {}", e.message)
+            throw e
         }
     }
 }
