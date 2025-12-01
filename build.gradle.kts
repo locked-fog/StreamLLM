@@ -1,12 +1,12 @@
 import org.gradle.api.publish.maven.MavenPublication
 plugins {
-    kotlin("jvm") version "2.0.21"
-    kotlin("plugin.serialization") version "2.0.21"
+    kotlin("jvm") version "2.2.0"
+    kotlin("plugin.serialization") version "2.2.0"
     id("maven-publish")
 }
 
 group = "com.github.locked-fog"
-version = "0.3.0"
+version = "0.3.1"
 
 repositories {
     mavenCentral()
@@ -42,7 +42,7 @@ publishing {
             from(components["java"])
             groupId = "com.github.locked-fog"
             artifactId = "stream-llm"
-            version = "0.3.0"
+            version = "0.3.1"
         }
     }
 }
