@@ -3,15 +3,15 @@
 [![](https://jitpack.io/v/locked-fog/StreamLLM.svg)](https://jitpack.io/#locked-fog/StreamLLM)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**StreamLLM** 是一个专为 Kotlin (JVM/Android) 开发者设计的轻量级 LLM 工作流编排库。它基于协程和 DSL，提供了一套极具表现力的接口，让你像写脚本一样管理 AI 对话、记忆和流式响应。
+**StreamLLM** 是一个专为 Kotlin (JVM/Android) 开发者设计的轻量级、**完全非阻塞**的 LLM 工作流编排库。它基于 Kotlin 协程和 DSL，提供了一套极具表现力的接口，让你像写脚本一样管理 AI 对话、记忆、流式响应和错误处理。
 
-✨ **核心特性：**
-* 🌊 **Native Kotlin DSL**: 像写普通代码一样编排 Prompt。
-* 🧠 **Advanced Memory Management**: 内置全局记忆管理，支持多记忆体切换、窗口控制和读写策略。
+✨ **v0.3.0 核心特性：**
+* ⚡ **Non-blocking I/O**: 全链路 `suspend` 设计，不再阻塞主线程，完美适配 Android UI 和高并发服务端 (Ktor/Spring WebFlux)。
+* 🧠 **Advanced Memory**: 内置全局记忆管理，支持多记忆体切换、窗口控制和读写策略。
+* 📊 **Observability**: 暴露 Token 用量 (Usage) 元数据，支持精确计费统计。
+* 🛡️ **Robustness**: 统一的结构化异常处理体系 (Authentication, RateLimit, ServerError 等) 和资源生命周期管理。
 * 🛠 **Type-Safe Extraction**: 自动将非结构化文本转换为 Kotlin 强类型对象（支持自动纠错重试）。
-* 🚀 **Streaming First**: 协程驱动的流式输出，告别回调地狱。
-* 🔌 **Universal Provider**: 完美适配 SiliconFlow、DeepSeek、OpenAI 及任何兼容 OpenAI 接口的模型。
-* 📝 **Custom Formatting**: 支持自定义历史记录的序列化格式，灵活适配各种 Prompt Engineering 需求。
+* 🔌 **Universal Provider**: 完美适配 SiliconFlow、DeepSeek (自动过滤 `<think>` 标签)、OpenAI 及任何兼容接口。
 
 ## 📦 安装 (Installation)
 
@@ -21,7 +21,7 @@ Step 1. 在根目录的 `settings.gradle.kts` 中添加 JitPack 仓库：
 dependencyResolutionManagement {
     repositories {
         mavenCentral()
-        maven("[https://jitpack.io](https://jitpack.io)")
+        maven(url = url("https://jitpack.io"))
     }
 }
 ````
@@ -30,7 +30,7 @@ Step 2. 在模块级 `build.gradle.kts` 中添加依赖：
 
 ```kotlin
 dependencies {
-    implementation("com.github.LockedFog:StreamLLM:v0.2.0") // 请使用最新版本
+    implementation("com.github.locked-fog:StreamLLM:v0.3.0") // 请使用最新版本
 }
 ```
 
@@ -43,101 +43,92 @@ dependencies {
 ```kotlin
 import dev.lockedfog.streamllm.StreamLLM
 
+// 基础初始化
 StreamLLM.init(
     apiKey = "sk-your-api-key",
-    baseUrl = "[https://api.siliconflow.cn/v1](https://api.siliconflow.cn/v1)", // 支持所有 OpenAI 兼容接口
+    baseUrl = "[https://api.siliconflow.cn/v1](https://api.siliconflow.cn/v1)", 
     modelName = "deepseek-ai/DeepSeek-V3",
     timeoutSeconds = 60
 )
+
+// 高级初始化：共享 HttpClient (推荐)
+val myClient = HttpClient(OkHttp) { /* 自定义配置 */ }
+StreamLLM.init(..., httpClient = myClient)
 ```
 
 ### 2\. 基础对话 (Basic Chat)
 
+注意：由于 v0.3.0 采用了非阻塞设计，`stream` 现在是挂起函数，必须在协程作用域内调用。
+
 ```kotlin
 import dev.lockedfog.streamllm.dsl.stream
+import kotlinx.coroutines.*
 
-stream {
-    // 简单的同步问答 (自动管理记忆)
-    val answer = "你好，我是个程序员".ask() 
-    println(answer)
+fun main() = runBlocking {
+    stream {
+        // 简单的同步问答 (自动管理记忆)
+        val answer = "你好，我是个程序员".ask() 
+        println(answer)
 
-    // 基于上下文追问
-    "我刚才说了什么职业？".ask().also { println(it) }
+        // 获取 Token 用量
+        println("Token Usage: ${lastUsage?.totalTokens}")
+    }
 }
 ```
 
-### 3\. 记忆管理 (Memory Management) 🔥
-
-StreamLLM 提供了强大的记忆控制能力。
+### 3\. 记忆管理 (Memory Management)
 
 ```kotlin
 import dev.lockedfog.streamllm.core.MemoryStrategy
 
-stream {
-    // 1. 切换/创建新的记忆体 (例如：为不同用户或不同任务)
-    newMemory("coding_assistant", system = "你是一个严谨的代码专家")
-    
-    // 2. 使用策略控制记忆 (MemoryStrategy)
-    // ReadWrite (默认): 读历史 + 写历史
-    // ReadOnly: 读历史 + 不写本次 (适合基于历史的总结任务)
-    // WriteOnly: 不读历史 + 写本次 (适合开启新话题)
-    // Stateless: 不读 + 不写
-    
-    "总结一下之前的对话".ask(
-        strategy = MemoryStrategy.ReadOnly, // 不让"总结"这个请求污染历史
-        historyWindow = 10 // 只读取最近 10 条历史
-    )
+launch {
+    stream {
+        // 1. 切换/创建新的记忆体
+        newMemory("coding_assistant", system = "你是一个严谨的代码专家")
+        
+        // 2. 使用策略控制记忆
+        "总结一下之前的对话".ask(
+            strategy = MemoryStrategy.ReadOnly, // 不让"总结"这个请求污染历史
+            historyWindow = 10 // 只读取最近 10 条历史
+        )
 
-    // 3. 临时覆盖 System Prompt
-    "把这句话翻译成英文".ask(
-        system = "你是一个翻译官，只输出翻译结果，不要废话", // 临时覆盖人设，不影响记忆体
-        strategy = MemoryStrategy.Stateless
-    )
+        // 3. 临时覆盖 System Prompt
+        "把这句话翻译成英文".ask(
+            system = "你是一个翻译官，只输出翻译结果", // 临时覆盖，不影响记忆体
+            strategy = MemoryStrategy.Stateless
+        )
+    }
 }
 ```
 
-### 4\. 自定义格式化 (Custom Formatting)
-
-当你想手动控制历史记录在 Prompt 中的位置和格式时：
-
-```kotlin
-stream {
-    val template = """
-        这里是相关背景资料...
-        
-        === 对话历史 ===
-        {{history}}
-        ===============
-        
-        请根据以上历史回答：{{it}}
-    """.trimIndent()
-
-    // 自定义历史格式: role=template; sep=separator
-    // 支持 user, assistant, system 角色
-    val myFormat = "user=Q: {{content}}; assistant=A: {{content}}; sep=\n\n"
-
-    "我的问题".ask(
-        promptTemplate = template,
-        formatter = myFormat // 将会把历史渲染为 Q: ... A: ... 的格式并填入 {{history}}
-    )
-}
-```
-
-### 5\. 结构化提取 (Structured Output)
-
-将自然语言转化为强类型对象，包含自动 JSON 修复机制。
+### 4\. 结构化提取与自动纠错
 
 ```kotlin
 @Serializable
 data class UserIntent(val action: String, val target: String)
 
-stream {
-    // 自动提取 + 类型转换 + 错误重试
-    val intent = "把空调调到24度".ask<UserIntent>(
-        promptTemplate = "提取意图，返回 JSON。"
-    )
-    println("Action: ${intent.action}, Target: ${intent.target}")
+launch {
+    stream {
+        try {
+            // 自动提取 + 类型转换 + JSON 错误自动重试
+            val intent = "把空调调到24度".ask<UserIntent>(
+                promptTemplate = "提取意图，返回 JSON。"
+            )
+            println("Action: ${intent.action}")
+        } catch (e: LlmException) {
+            // 处理业务异常 (如鉴权失败、余额不足)
+            println("API Error: ${e.message}")
+        }
+    }
 }
+```
+
+### 5\. 资源释放
+
+当不再需要使用库时（例如应用关闭），可以释放资源：
+
+```kotlin
+StreamLLM.close()
 ```
 
 ## 🛠 参数详解
@@ -147,9 +138,8 @@ stream {
 | `strategy` | 记忆策略 (ReadWrite, ReadOnly, WriteOnly, Stateless) | ReadWrite |
 | `historyWindow` | 历史窗口大小 (-1=全部, 0=无, N=最近N条) | -1 |
 | `system` | 临时 System Prompt (覆盖记忆体设定) | null |
-| `formatter` | 历史序列化格式字符串 | null |
+| `formatter` | 历史序列化格式字符串 (如 "user=Q:{{content}};...") | null |
 | `temperature` | 随机性 (0.0 - 2.0) | 全局默认 |
-| `model` | 临时覆盖模型名称 | 全局默认 |
 
 ## License
 
