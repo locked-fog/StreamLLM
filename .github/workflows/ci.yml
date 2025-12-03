@@ -1,0 +1,45 @@
+name: StreamLLM CI
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 检出代码
+      - uses: actions/checkout@v4
+
+      # 2. 设置 JDK 21 (根据 build.gradle.kts 配置)
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle  # 开启 Gradle 缓存，加速后续构建
+
+      # 3. 赋予 gradlew 执行权限 (防止 Linux 环境下权限不足报错)
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # 4. 运行测试 (单元测试 + 模拟环境集成测试)
+      # 这会自动运行 OpenAiClientTest, StreamScopeTest, SimulationIntegrationTest 等
+      - name: Run Tests
+        run: ./gradlew test --info
+
+      # 5. 构建项目 (验证编译和打包)
+      - name: Build with Gradle
+        run: ./gradlew build -x test # 测试已经在上一步跑过了
+
+      # 6. (可选) 上传测试报告
+      # 如果测试失败，可以在 GitHub Actions 页面下载报告查看详情
+      - name: Upload Test Results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: build/reports/tests/
