@@ -25,7 +25,7 @@ class AuthenticationException(message: String) : LlmException(message)
  * 速率限制或余额不足异常 (对应 HTTP 429)。
  *
  * 可能原因：
- * - 请求频率超过了 API 提供商的限制 (QPS/RPM)。
+ * - 请求频率超过了 API 提供商的限制 (TPM/RPM)。
  * - 账户余额不足 (Insufficient Quota)。
  */
 class RateLimitException(message: String) : LlmException(message)

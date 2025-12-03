@@ -55,7 +55,7 @@ interface HistoryFormatter {
             var sep = "\n"
 
             parts.forEach { part ->
-                val kv = part.trim().split("=", limit = 2)
+                val kv = part.split("=", limit = 2)
                 if (kv.size == 2) {
                     val key = kv[0].trim().lowercase()
                     val value = kv[1] // 保留值中的空格

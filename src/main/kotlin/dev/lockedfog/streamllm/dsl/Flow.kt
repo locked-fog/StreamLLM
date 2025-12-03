@@ -11,9 +11,9 @@ import dev.lockedfog.streamllm.core.StreamScope
  * 示例：
  * ```kotlin
  * launch {
- * stream {
- * "你好".ask()
- * }
+ *     stream {
+ *         "你好".ask()
+ *     }
  * }
  * ```
  *

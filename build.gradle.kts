@@ -16,9 +16,7 @@ dependencies {
     testImplementation(kotlin("test"))
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-
     implementation("org.slf4j:slf4j-simple:2.0.17")
 
 
@@ -27,6 +25,11 @@ dependencies {
     implementation("io.ktor:ktor-client-okhttp:$ktorVersion")
     implementation("io.ktor:ktor-client-content-negotiation:${ktorVersion}")
     implementation("io.ktor:ktor-serialization-kotlinx-json:${ktorVersion}")
+
+    testImplementation(kotlin("test"))
+    testImplementation("io.mockk:mockk:1.13.8")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("io.ktor:ktor-client-mock:${ktorVersion}")
 }
 
 tasks.test {

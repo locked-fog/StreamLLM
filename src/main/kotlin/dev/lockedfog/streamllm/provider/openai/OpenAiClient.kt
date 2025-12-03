@@ -193,18 +193,18 @@ class OpenAiClient(
 
                         } catch (e: Exception) {
                             if (e is LlmException) throw e // 重新抛出已知的业务异常
-                            logger.debug("⚠️ JSON Parse Warning: {} | Data: {}", e.message, data)
+                            logger.debug("JSON Parse Warning: {} | Data: {}", e.message, data)
                         }
                     } else if (line.trim().startsWith("{") && line.contains("\"error\"")) {
                         // 处理非 SSE 格式的错误 (部分厂商在发生错误时会直接返回 JSON 而非 Event Stream)
-                        logger.error("❌ Raw JSON Error in stream: {}", line)
+                        logger.error("Raw JSON Error in stream: {}", line)
                         throw UnknownLlmException("Raw JSON Error: $line")
                     }
                 }
             }
         } catch (e: Exception) {
             if (e !is LlmException) {
-                logger.error("🚨 Stream Request Exception: {}", e.message)
+                logger.error("Stream Request Exception: {}", e.message)
             }
             throw e
         }

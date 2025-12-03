@@ -3,7 +3,9 @@ package dev.lockedfog.streamllm.core
 import dev.lockedfog.streamllm.StreamLLM
 import dev.lockedfog.streamllm.utils.HistoryFormatter
 import dev.lockedfog.streamllm.utils.JsonSanitizer
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.SerializationException
 import org.slf4j.LoggerFactory
 import java.lang.IllegalStateException
@@ -38,6 +40,7 @@ class StreamScope {
      * @param formatter 自定义历史记录格式化器字符串。仅在 [promptTemplate] 包含 `{{history}}` 时生效。
      * @param options 生成选项 (Temperature, MaxTokens 等)。
      * @param onToken 流式回调。如果提供此参数，请求将以流式 (Streaming) 方式执行，每收到一个 Token 回调一次。
+     * 该回调是 suspend 函数，支持在其中执行耗时挂起操作。
      * @return 完整的响应文本。
      */
     suspend fun String.ask(
@@ -47,7 +50,7 @@ class StreamScope {
         system: String? = null,
         formatter: String? = null,
         options: GenerationOptions? = null,
-        onToken: ((String) -> Unit)? = null
+        onToken: (suspend (String) -> Unit)? = null
     ): String {
         val provider = StreamLLM.defaultProvider ?: throw IllegalStateException("StreamLLM Not Initialized")
 
@@ -102,19 +105,75 @@ class StreamScope {
         var responseContent: String
 
         if (onToken != null) {
-            // 流式处理：收集 content，同时监听 usage
             val sb = StringBuilder()
-            provider.stream(messagesToSend, options).collect { response ->
-                // 更新 Usage (如果存在)
-                if (response.usage != null) {
-                    this@StreamScope.lastUsage = response.usage
+
+            // --- 核心实现开始: 自适应批处理 (Adaptive Batching with Skipping) ---
+
+            // 1. 数据流 (Buffer)：使用 StringBuffer (线程安全) 配合 synchronized 块保证原子性
+            val streamBuffer = StringBuffer()
+
+            // 2. 锁 (Lock)：控制 Lambda 的访问，确保同一时间只有一个 Lambda 在处理
+            val mutex = Mutex()
+
+            // 3. 定义处理函数：从 Stream 中“读取并清除”数据
+            val processStream = suspend {
+                val chunk = synchronized(streamBuffer) {
+                    if (streamBuffer.isNotEmpty()) {
+                        val content = streamBuffer.toString()
+                        streamBuffer.setLength(0) // 清空流
+                        content
+                    } else {
+                        null
+                    }
                 }
-                // 更新 Content (如果存在)
-                if (response.content.isNotEmpty()) {
-                    onToken(response.content)
-                    sb.append(response.content)
+
+                // 如果拿到了数据，就调用用户的 Lambda
+                if (!chunk.isNullOrEmpty()) {
+                    onToken(chunk)
+                    sb.append(chunk)
                 }
             }
+
+            // 使用 coroutineScope 确保所有子协程完成后才返回
+            coroutineScope {
+                // 启动网络消费者
+                provider.stream(messagesToSend, options).collect { res ->
+                    // A. 网络层：快速写入 Buffer
+                    if (res.content.isNotEmpty()) {
+                        synchronized(streamBuffer) {
+                            streamBuffer.append(res.content)
+                        }
+                    }
+
+                    // B. 尝试触发 Lambda：尝试获取锁 (TryLock)
+                    // 如果获取成功，说明当前没有 Lambda 在运行，启动新协程处理
+                    // 如果获取失败，说明 Lambda 正忙，直接跳过 (Skip)，让数据积压在 Buffer 中等待下一次处理
+                    if (mutex.tryLock()) {
+                        launch {
+                            try {
+                                processStream()
+                            } finally {
+                                mutex.unlock() // 处理完自动解锁
+                            }
+                        }
+                    }
+
+                    if (res.usage != null) {
+                        this@StreamScope.lastUsage = res.usage
+                    }
+                }
+
+                // --- Flush (处理最后的数据) ---
+                // 流结束后，必须等待锁释放，并处理 Buffer 中残留的数据
+                mutex.lock() // 挂起等待正在运行的 Lambda 结束
+                try {
+                    processStream() // 处理剩余数据 (Flush)
+                } finally {
+                    mutex.unlock()
+                }
+            }
+            // --- 核心实现结束 ---
+
             responseContent = sb.toString()
         } else {
             // 非流式处理
@@ -149,7 +208,7 @@ class StreamScope {
         maxTokens: Int? = null,
         model: String? = null,
         stop: List<String>? = null,
-        onToken: ((String) -> Unit)? = null
+        onToken: (suspend (String) -> Unit)? = null
     ): String {
         val opts = GenerationOptions(
             temperature = temperature,
@@ -180,7 +239,7 @@ class StreamScope {
         maxTokens: Int? = null,
         model: String? = null,
         stop: List<String>? = null,
-        onToken: ((String) -> Unit) = { }
+        onToken: suspend (String) -> Unit = { }
     ): String {
         val opts = GenerationOptions(
             temperature = temperature,
@@ -194,8 +253,6 @@ class StreamScope {
 
     /**
      * 发送流式请求的重载方法，接受挂起函数作为回调。
-     *
-     * 注意：由于当前架构限制，[block] 在内部被适配为同步执行，请避免在 block 中进行耗时操作。
      */
     suspend fun String.stream(
         promptTemplate: String = "",
@@ -204,14 +261,10 @@ class StreamScope {
         system: String? = null,
         formatter: String? = null,
         options: GenerationOptions? = null,
-        block: suspend (String) -> Unit = {
-            delay(10) // 默认空实现
-        }
+        block: suspend (String) -> Unit = { }
     ): String {
         return this.ask(promptTemplate, strategy, historyWindow, system, formatter, options) { token ->
-            // 简易适配：这里不支持外部传入 suspend block，因为 ask 接口限制
-            // 实际使用时，用户可以在 stream 外层 collect flow，或者我们后续重构 ask 回调为 suspend
-            // 这里仅做类型转换，实际运行时 block 内部不应包含长时间挂起逻辑，否则会阻塞处理流
+            block(token)
         }
     }
 
@@ -220,7 +273,6 @@ class StreamScope {
      *
      * 内部会先使用 [JsonSanitizer] 清洗字符串（移除 Markdown 标记等）。
      */
-    @Suppress("RedundantSuspendModifier")
     suspend inline fun <reified T> String.to(): T {
         val jsonString = JsonSanitizer.sanitize(this)
         return try {
@@ -262,7 +314,7 @@ class StreamScope {
                     attempt++
                     if (attempt > maxRetries) throw e
 
-                    logger.warn("⚠️ [Auto-Fix] Retrying {}/{} due to JSON error: {}", attempt, maxRetries, e.message)
+                    logger.warn("[Auto-Fix] Retrying {}/{} due to JSON error: {}", attempt, maxRetries, e.message)
 
                     val fixOptions = (options ?: GenerationOptions()).copy(temperature = 0.1)
                     val fixPrompt = "Previous JSON invalid: ${e.message}. Return ONLY JSON. Original content: $currentResponse"
