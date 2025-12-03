@@ -1,7 +1,6 @@
 package dev.lockedfog.streamllm.integration
 
 import dev.lockedfog.streamllm.StreamLLM
-import dev.lockedfog.streamllm.core.MemoryStrategy
 import dev.lockedfog.streamllm.core.ServerException
 import dev.lockedfog.streamllm.dsl.stream
 import dev.lockedfog.streamllm.provider.openai.OpenAiChatRequest
@@ -18,7 +17,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
 
 class SimulationIntegrationTest {
 

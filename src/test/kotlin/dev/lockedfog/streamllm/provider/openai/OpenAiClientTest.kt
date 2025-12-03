@@ -7,7 +7,7 @@ import io.ktor.client.plugins.contentnegotiation.* // [新增]
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.* // [新增]
 import io.ktor.utils.io.*
-import io.ktor.utils.io.core.* import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json           // [新增]
 import org.junit.jupiter.api.Test
