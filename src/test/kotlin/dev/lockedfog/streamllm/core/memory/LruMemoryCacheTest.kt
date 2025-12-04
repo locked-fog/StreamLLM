@@ -1,6 +1,5 @@
 package dev.lockedfog.streamllm.core.memory
 
-import dev.lockedfog.streamllm.core.MemoryManager
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 

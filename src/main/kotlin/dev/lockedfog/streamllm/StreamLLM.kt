@@ -7,6 +7,7 @@ import dev.lockedfog.streamllm.provider.LlmProvider
 import dev.lockedfog.streamllm.provider.openai.OpenAiClient
 import io.ktor.client.HttpClient
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 import java.time.Duration
 
 /**
@@ -16,7 +17,8 @@ import java.time.Duration
  * 在使用任何 DSL 功能之前，必须先调用 [init] 方法。
  */
 object StreamLLM {
-    private const val maxMemoryCount: Int = 10
+    private const val MAX_MEMORY_COUNT: Int = 10
+    private val logger = LoggerFactory.getLogger(StreamLLM::class.java)
     /**
      * 全局共享的 JSON 序列化实例。
      * 配置为宽松模式：忽略未知键、宽松解析、编码默认值。
@@ -31,7 +33,7 @@ object StreamLLM {
      * 全局记忆管理器实例。
      * 只要应用进程存在，记忆数据就会保留（基于内存存储）。
      */
-    var memory: MemoryManager = MemoryManager(InMemoryStorage(),maxMemoryCount)
+    var memory: MemoryManager = MemoryManager(InMemoryStorage(),MAX_MEMORY_COUNT)
         private set
 
     /**
@@ -101,7 +103,7 @@ object StreamLLM {
         try {
             defaultProvider?.close()
         } catch (e: Exception) {
-            // ignore or log
+            logger.error("[StreamLLM] Could not close due to an ERROR occurs",e)
         } finally {
             defaultProvider = null
         }
