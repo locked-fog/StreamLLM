@@ -26,6 +26,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Run Code Analysis (Detekt)
+        run: ./gradlew detekt
+
       # 4. 运行测试 (单元测试 + 模拟环境集成测试)
       # 这会自动运行 OpenAiClientTest, StreamScopeTest, SimulationIntegrationTest 等
       - name: Run Tests

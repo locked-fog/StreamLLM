@@ -1,0 +1,52 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues></ManuallySuppressedIssues>
+  <CurrentIssues>
+    <ID>InstanceOfCheckForException:OpenAiClient.kt$OpenAiClient$e !is LlmException</ID>
+    <ID>InstanceOfCheckForException:OpenAiClient.kt$OpenAiClient$e is LlmException</ID>
+    <ID>InstanceOfCheckForException:StreamScope.kt$StreamScope$e is IllegalArgumentException</ID>
+    <ID>InstanceOfCheckForException:StreamScope.kt$StreamScope$e is SerializationException</ID>
+    <ID>LoopWithTooManyJumpStatements:OpenAiClient.kt$OpenAiClient$while</ID>
+    <ID>MagicNumber:OpenAiClient.kt$OpenAiClient$60</ID>
+    <ID>MaxLineLength:OpenAiClient.kt$OpenAiClient$private</ID>
+    <ID>MaxLineLength:StreamScope.kt$StreamScope$val fixPrompt = "Previous JSON invalid: ${e.message}. Return ONLY JSON. Original content: $currentResponse"</ID>
+    <ID>MaxLineLength:StreamScope.kt$StreamScope$val history = StreamLLM.memory.getCurrentHistory(windowSize = historyWindow, tempSystem = system, includeSystem = true)</ID>
+    <ID>MaxLineLength:StreamScope.kt$StreamScope$val historyFormatter = if (formatter != null) HistoryFormatter.fromString(formatter) else HistoryFormatter.DEFAULT</ID>
+    <ID>NestedBlockDepth:StreamScope.kt$StreamScope$suspend inline fun &lt;reified T&gt; String.ask( promptTemplate: String = "", strategy: MemoryStrategy = MemoryStrategy.ReadWrite, historyWindow: Int = -1, system: String? = null, formatter: String? = null, maxRetries: Int = 3, options: GenerationOptions? = null ): T</ID>
+    <ID>NewLineAtEndOfFile:ChatRole.kt$dev.lockedfog.streamllm.core.ChatRole.kt</ID>
+    <ID>NewLineAtEndOfFile:Flow.kt$dev.lockedfog.streamllm.dsl.Flow.kt</ID>
+    <ID>NewLineAtEndOfFile:GenerationOptions.kt$dev.lockedfog.streamllm.core.GenerationOptions.kt</ID>
+    <ID>NewLineAtEndOfFile:HistoryFormatter.kt$dev.lockedfog.streamllm.utils.HistoryFormatter.kt</ID>
+    <ID>NewLineAtEndOfFile:JsonSanitizer.kt$dev.lockedfog.streamllm.utils.JsonSanitizer.kt</ID>
+    <ID>NewLineAtEndOfFile:LlmExceptions.kt$dev.lockedfog.streamllm.core.LlmExceptions.kt</ID>
+    <ID>NewLineAtEndOfFile:LlmModels.kt$dev.lockedfog.streamllm.core.LlmModels.kt</ID>
+    <ID>NewLineAtEndOfFile:LlmProvider.kt$dev.lockedfog.streamllm.provider.LlmProvider.kt</ID>
+    <ID>NewLineAtEndOfFile:MemoryManager.kt$dev.lockedfog.streamllm.core.MemoryManager.kt</ID>
+    <ID>NewLineAtEndOfFile:OpenAiClient.kt$dev.lockedfog.streamllm.provider.openai.OpenAiClient.kt</ID>
+    <ID>NewLineAtEndOfFile:OpenAiModels.kt$dev.lockedfog.streamllm.provider.openai.OpenAiModels.kt</ID>
+    <ID>NewLineAtEndOfFile:StreamLLM.kt$dev.lockedfog.streamllm.StreamLLM.kt</ID>
+    <ID>NewLineAtEndOfFile:StreamScope.kt$dev.lockedfog.streamllm.core.StreamScope.kt</ID>
+    <ID>ReturnCount:MemoryManager.kt$MemoryManager$fun getCurrentHistory( windowSize: Int = -1, tempSystem: String? = null, includeSystem: Boolean = true ): List&lt;ChatMessage&gt;</ID>
+    <ID>SwallowedException:StreamLLM.kt$StreamLLM$e: Exception</ID>
+    <ID>ThrowsCount:OpenAiClient.kt$OpenAiClient$private suspend fun handleHttpError(response: HttpResponse)</ID>
+    <ID>ThrowsCount:StreamScope.kt$StreamScope$suspend inline fun &lt;reified T&gt; String.ask( promptTemplate: String = "", strategy: MemoryStrategy = MemoryStrategy.ReadWrite, historyWindow: Int = -1, system: String? = null, formatter: String? = null, maxRetries: Int = 3, options: GenerationOptions? = null ): T</ID>
+    <ID>TooGenericExceptionCaught:OpenAiClient.kt$OpenAiClient$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:StreamLLM.kt$StreamLLM$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:StreamScope.kt$StreamScope$e: Exception</ID>
+    <ID>UseCheckOrError:MemoryManager.kt$MemoryManager$throw IllegalStateException("Cannot delete the currently active memory ('$name'). Please switch first.")</ID>
+    <ID>UseCheckOrError:StreamScope.kt$StreamScope$throw IllegalStateException("StreamLLM Not Initialized")</ID>
+    <ID>UseCheckOrError:StreamScope.kt$StreamScope$throw IllegalStateException("Unreachable")</ID>
+    <ID>UseRequire:MemoryManager.kt$MemoryManager$throw IllegalArgumentException("Memory '$name' does not exist. Please call newMemory() first.")</ID>
+    <ID>UseRequire:StreamScope.kt$StreamScope$throw IllegalArgumentException("Conflict: Template contains '{{history}}' but strategy is '$strategy'.")</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import dev.lockedfog.streamllm.core.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.client.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.client.call.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.client.engine.okhttp.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.client.plugins.contentnegotiation.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.client.request.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.client.statement.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.http.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.serialization.kotlinx.json.*</ID>
+    <ID>WildcardImport:OpenAiClient.kt$import io.ktor.utils.io.*</ID>
+  </CurrentIssues>
+</SmellBaseline>
