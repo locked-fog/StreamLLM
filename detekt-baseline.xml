@@ -26,17 +26,16 @@
     <ID>NewLineAtEndOfFile:OpenAiModels.kt$dev.lockedfog.streamllm.provider.openai.OpenAiModels.kt</ID>
     <ID>NewLineAtEndOfFile:StreamLLM.kt$dev.lockedfog.streamllm.StreamLLM.kt</ID>
     <ID>NewLineAtEndOfFile:StreamScope.kt$dev.lockedfog.streamllm.core.StreamScope.kt</ID>
-    <ID>ReturnCount:MemoryManager.kt$MemoryManager$fun getCurrentHistory( windowSize: Int = -1, tempSystem: String? = null, includeSystem: Boolean = true ): List&lt;ChatMessage&gt;</ID>
     <ID>SwallowedException:StreamLLM.kt$StreamLLM$e: Exception</ID>
     <ID>ThrowsCount:OpenAiClient.kt$OpenAiClient$private suspend fun handleHttpError(response: HttpResponse)</ID>
     <ID>ThrowsCount:StreamScope.kt$StreamScope$suspend inline fun &lt;reified T&gt; String.ask( promptTemplate: String = "", strategy: MemoryStrategy = MemoryStrategy.ReadWrite, historyWindow: Int = -1, system: String? = null, formatter: String? = null, maxRetries: Int = 3, options: GenerationOptions? = null ): T</ID>
+    <ID>TooGenericExceptionCaught:MemoryManager.kt$MemoryManager$e: Exception</ID>
     <ID>TooGenericExceptionCaught:OpenAiClient.kt$OpenAiClient$e: Exception</ID>
     <ID>TooGenericExceptionCaught:StreamLLM.kt$StreamLLM$e: Exception</ID>
     <ID>TooGenericExceptionCaught:StreamScope.kt$StreamScope$e: Exception</ID>
     <ID>UseCheckOrError:MemoryManager.kt$MemoryManager$throw IllegalStateException("Cannot delete the currently active memory ('$name'). Please switch first.")</ID>
     <ID>UseCheckOrError:StreamScope.kt$StreamScope$throw IllegalStateException("StreamLLM Not Initialized")</ID>
     <ID>UseCheckOrError:StreamScope.kt$StreamScope$throw IllegalStateException("Unreachable")</ID>
-    <ID>UseRequire:MemoryManager.kt$MemoryManager$throw IllegalArgumentException("Memory '$name' does not exist. Please call newMemory() first.")</ID>
     <ID>UseRequire:StreamScope.kt$StreamScope$throw IllegalArgumentException("Conflict: Template contains '{{history}}' but strategy is '$strategy'.")</ID>
     <ID>WildcardImport:OpenAiClient.kt$import dev.lockedfog.streamllm.core.*</ID>
     <ID>WildcardImport:OpenAiClient.kt$import io.ktor.client.*</ID>

@@ -21,7 +21,6 @@ class StreamScopeTest {
     fun setup() {
         // 初始化单例，注入 Mock Provider
         StreamLLM.init(mockProvider)
-        StreamLLM.memory.clear()
     }
 
     @AfterEach
@@ -86,7 +85,6 @@ class StreamScopeTest {
 
     @Test
     fun `test memory interaction in stream`() = runTest {
-        // 验证 stream 方法是否正确写入历史记忆
         every { mockProvider.stream(any(), any()) } returns flow {
             emit(LlmResponse("Response"))
         }
@@ -95,6 +93,7 @@ class StreamScopeTest {
             "Question".stream()
         }
 
+        // [注意] getCurrentHistory 现在是 suspend 函数，但 runTest 支持 suspend 调用
         val history = StreamLLM.memory.getCurrentHistory()
         assertEquals(2, history.size)
         assertEquals("Question", history[0].content)

@@ -340,7 +340,7 @@ class StreamScope {
     /**
      * 清空当前活动记忆体的快捷方法。
      */
-    fun clearMemory() {
+    suspend fun clearMemory() {
         StreamLLM.memory.clear()
     }
 
@@ -352,7 +352,7 @@ class StreamScope {
      * @param name 记忆体名称。
      * @param system (可选) 该记忆体的 System Prompt。
      */
-    fun newMemory(name: String, system: String? = null) {
+    suspend fun newMemory(name: String, system: String? = null) {
         StreamLLM.memory.createMemory(name, system)
         StreamLLM.memory.switchMemory(name)
     }
@@ -362,7 +362,7 @@ class StreamScope {
      *
      * @param name 记忆体名称。
      */
-    fun switchMemory(name: String) {
+    suspend fun switchMemory(name: String) {
         StreamLLM.memory.switchMemory(name)
     }
 
@@ -371,7 +371,7 @@ class StreamScope {
      *
      * @param name 记忆体名称。
      */
-    fun deleteMemory(name: String) {
+    suspend fun deleteMemory(name: String) {
         StreamLLM.memory.deleteMemory(name)
     }
 
@@ -381,7 +381,7 @@ class StreamScope {
      * @param name 记忆体名称。
      * @param prompt 新的 System Prompt。
      */
-    fun setSystemPrompt(name: String, prompt: String) {
+    suspend fun setSystemPrompt(name: String, prompt: String) {
         StreamLLM.memory.updateSystemPrompt(name = name, prompt = prompt)
     }
 }

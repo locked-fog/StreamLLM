@@ -2,6 +2,7 @@ package dev.lockedfog.streamllm.integration
 
 import dev.lockedfog.streamllm.StreamLLM
 import dev.lockedfog.streamllm.core.ServerException
+import dev.lockedfog.streamllm.core.memory.InMemoryStorage
 import dev.lockedfog.streamllm.dsl.stream
 import dev.lockedfog.streamllm.provider.openai.OpenAiChatRequest
 import io.ktor.client.*
@@ -13,7 +14,6 @@ import io.ktor.utils.io.*
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -21,11 +21,6 @@ import kotlin.test.assertFailsWith
 class SimulationIntegrationTest {
 
     private val jsonParser = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-
-    @BeforeEach
-    fun setup() {
-        StreamLLM.memory.clear()
-    }
 
     @AfterEach
     fun tearDown() {
@@ -45,12 +40,14 @@ class SimulationIntegrationTest {
         }
 
         // 初始化 StreamLLM，注入带有 MockEngine 的 HttpClient
-        // 这样 OpenAiClient, MemoryManager, StreamScope 都是真实的，只有网络是模拟的
+        // 显式使用 InMemoryStorage，确保每次测试状态隔离
         StreamLLM.init(
             baseUrl = "https://api.fake.com",
             apiKey = "fake-key",
             modelName = "gpt-fake",
-            httpClient = httpClient
+            httpClient = httpClient,
+            storage = InMemoryStorage(), // 使用内存存储
+            maxMemoryCount = 10
         )
     }
 

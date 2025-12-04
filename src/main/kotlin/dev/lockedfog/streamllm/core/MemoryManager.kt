@@ -1,7 +1,20 @@
 package dev.lockedfog.streamllm.core
 
+import dev.lockedfog.streamllm.core.memory.LruMemoryCache
+import dev.lockedfog.streamllm.core.memory.MemoryStorage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.io.IOException
+import org.slf4j.LoggerFactory
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.cancellation.CancellationException
 
 // --- 核心数据模型 ---
 
@@ -56,28 +69,57 @@ enum class MemoryStrategy {
  * 负责管理应用中的对话历史。支持多记忆体（Memory Context）切换，
  * 允许针对不同的用户、会话或任务维护独立的上下文。
  *
- * 注意：目前基于内存存储 (ConcurrentHashMap)，应用重启后数据会丢失。
+ * 采用了 LRU 缓存 + 异步持久化的策略。
  */
-class MemoryManager {
-
+class MemoryManager(
+    private val storage: MemoryStorage,
+    maxMemoryCount: Int,
+    private val persistenceScope: CoroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+) {
+    private val logger = LoggerFactory.getLogger(MemoryManager::class.java)
     // 内部类：记忆上下文
-    private data class MemoryContext(
+    internal data class MemoryContext(
         var systemPrompt: String? = null,
         val messages: MutableList<ChatMessage> = Collections.synchronizedList(mutableListOf())
     )
 
-    // 多记忆体存储：Name -> Context
-    private val memories = ConcurrentHashMap<String, MemoryContext>()
+
+    // L1 Cache: 互斥锁保护的 LRU 缓存
+    private val cacheLock = Mutex()
+    private val cache = LruMemoryCache<MemoryContext>(maxMemoryCount) { evictedId, evictedContext ->
+        // 驱逐回调：启动协程执行兜底持久化
+        persistenceScope.launch {
+            try {
+                storage.saveFullContext(evictedId, evictedContext.systemPrompt, evictedContext.messages)
+            } catch(e: CancellationException) {
+                throw e
+            }catch (e: IOException) {
+                // 2. I/O 异常：这是持久化层最常见的错误（如磁盘满、文件锁、网络断开）
+                // 我们可以记录更具体的日志信息
+                logger.error("[StreamLLM] I/O error while persisting evicted memory '{}': {}", evictedId, e.message)
+            }catch (e: Exception) {
+                @Suppress("TooGenericExceptionCaught")
+                logger.error("[StreamLLM] Failed to persist evicted memory '{}'",evictedId,e)
+            }
+        }
+    }
+    // 预加载任务注册表 (防止缓存击穿)
+    private val loadingTasks = ConcurrentHashMap<String, Deferred<Unit>>()
 
     @Volatile
     private var currentMemoryId = "default"
 
-    init {
-        // 初始化默认记忆体
-        createMemory("default")
-    }
-
     // --- 记忆管理接口 ---
+    /**
+    +     * 预加载指定的记忆体到缓存中。
+    +     * 建议在切换会话前（如列表点击事件）调用。
+    +     */
+    suspend fun preLoad(memoryId: String) {
+        val needsLoad = cacheLock.withLock { !cache.containsKey(memoryId) }
+        if (needsLoad) {
+            getOrStartLoadingTask(memoryId).join()
+        }
+    }
 
     /**
      * 创建一个新的记忆体。
@@ -87,28 +129,57 @@ class MemoryManager {
      * @param name 记忆体的唯一标识名称。
      * @param systemPrompt (可选) 该记忆体的默认 System Prompt (人设/指令)。
      */
-    fun createMemory(name: String, systemPrompt: String? = null) {
-        memories.computeIfAbsent(name) {
-            MemoryContext(systemPrompt = systemPrompt)
+    suspend fun createMemory(name: String, systemPrompt: String? = null) {
+        cacheLock.withLock {
+            val context = cache.computeIfAbsent(name) { MemoryContext() }
+            if (systemPrompt != null) {
+                context.systemPrompt = systemPrompt
+            }
         }
-        // 如果已存在，且提供了新的 systemPrompt，则更新
-        if (systemPrompt != null) {
-            memories[name]?.systemPrompt = systemPrompt
+        // 异步持久化
+        persistenceScope.launch {
+            if (systemPrompt != null) {
+                storage.setSystemPrompt(name, systemPrompt)
+            }
         }
     }
 
     /**
-     * 切换当前活动的记忆体。
-     *
-     * 切换后，后续的 `ask` 或 `stream` 调用将默认使用该记忆体的历史记录。
-     *
-     * @param name 目标记忆体的名称。
-     * @throws IllegalArgumentException 如果指定的记忆体不存在。
+     * 获取或启动加载任务 (Singleflight 模式)。
      */
-    fun switchMemory(name: String) {
-        if (!memories.containsKey(name)) {
-            throw IllegalArgumentException("Memory '$name' does not exist. Please call newMemory() first.")
+    private fun getOrStartLoadingTask(id: String): Deferred<Unit> {
+        return loadingTasks.computeIfAbsent(id) {
+            persistenceScope.async {
+                try {
+                    val sys = storage.getSystemPrompt(id)
+                    val msgs = storage.getMessages(id)
+                    val context = MemoryContext(sys, Collections.synchronizedList(msgs.toMutableList()))
+
+                    cacheLock.withLock {
+                        cache[id] = context
+                    }
+                } finally {
+                    loadingTasks.remove(id)
+                }
+            }
         }
+    }
+
+
+    /**
+     * 切换当前活动的记忆体。
+     * @param name 目标记忆体的名称。
+     *
+     */
+    suspend fun switchMemory(name: String) {
+        // 1. 尝试从缓存获取 (无需加载)
+        val inCache = cacheLock.withLock { cache.containsKey(name) }
+        if (inCache) {
+            currentMemoryId = name
+            return
+        }
+        // 2. 等待加载任务 (复用 preLoad 逻辑)
+        getOrStartLoadingTask(name).await()
         currentMemoryId = name
     }
 
@@ -118,11 +189,16 @@ class MemoryManager {
      * @param name 要删除的记忆体名称。
      * @throws IllegalStateException 如果尝试删除当前正在使用的记忆体。
      */
-    fun deleteMemory(name: String) {
+    suspend fun deleteMemory(name: String) {
         if (name == currentMemoryId) {
             throw IllegalStateException("Cannot delete the currently active memory ('$name'). Please switch first.")
         }
-        memories.remove(name)
+        cacheLock.withLock {
+            cache.remove(name)
+        }
+        persistenceScope.launch {
+            storage.deleteMemory(name)
+        }
     }
 
     /**
@@ -131,8 +207,15 @@ class MemoryManager {
      * @param name 记忆体名称。
      * @param prompt 新的 System Prompt。
      */
-    fun updateSystemPrompt(name: String, prompt: String?) {
-        memories[name]?.systemPrompt = prompt
+    suspend fun updateSystemPrompt(name: String, prompt: String?) {
+        cacheLock.withLock {
+            cache[name]?.systemPrompt = prompt
+        }
+        persistenceScope.launch {
+            if (prompt != null) {
+                storage.setSystemPrompt(name, prompt)
+            }
+        }
     }
 
     // --- 消息操作接口 (针对当前记忆体) ---
@@ -143,8 +226,19 @@ class MemoryManager {
      * @param role 角色。
      * @param content 内容。
      */
-    fun addMessage(role: ChatRole, content: String) {
-        memories[currentMemoryId]?.messages?.add(ChatMessage(role, content))
+    suspend fun addMessage(role: ChatRole, content: String) {
+        val message = ChatMessage(role, content)
+
+        // 1. Write-Through: 先写内存
+        cacheLock.withLock {
+            val context = cache.computeIfAbsent(currentMemoryId) { MemoryContext() }
+            context.messages.add(message)
+        }
+
+        // 2. Async Persist: 后台写库
+        persistenceScope.launch {
+            storage.addMessage(currentMemoryId, message)
+        }
     }
 
     /**
@@ -158,14 +252,16 @@ class MemoryManager {
      * @param includeSystem 是否在返回列表中包含 System Message。
      * @return 构造好的消息列表。
      */
-    fun getCurrentHistory(
+    suspend fun getCurrentHistory(
         windowSize: Int = -1,
         tempSystem: String? = null,
         includeSystem: Boolean = true
     ): List<ChatMessage> {
-        val context = memories[currentMemoryId] ?: return emptyList()
+        // 必须加锁读取，因为 accessOrder LRU 会修改链表
+        val context = cacheLock.withLock { cache[currentMemoryId] } ?: return emptyList()
 
         // 1. 处理窗口切片 (只针对 User/Assistant 对话历史)
+        // 注意：需在锁外操作副本或确保线程安全，这里 messages 是 synchronizedList，所以还可以
         val rawHistory = context.messages
         val slicedHistory = when {
             windowSize < 0 -> rawHistory.toList() // 全部
@@ -190,7 +286,12 @@ class MemoryManager {
     /**
      * 清空当前活动记忆体中的所有对话历史（保留 System Prompt）。
      */
-    fun clear() {
-        memories[currentMemoryId]?.messages?.clear()
+    suspend fun clear() {
+        cacheLock.withLock {
+            cache[currentMemoryId]?.messages?.clear()
+        }
+        persistenceScope.launch {
+            storage.clearMessages(currentMemoryId)
+        }
     }
 }

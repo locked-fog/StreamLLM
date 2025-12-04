@@ -1,10 +1,13 @@
 package dev.lockedfog.streamllm.integration
 
 import dev.lockedfog.streamllm.StreamLLM
+import dev.lockedfog.streamllm.core.memory.InMemoryStorage
 import dev.lockedfog.streamllm.dsl.stream
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -15,25 +18,29 @@ import kotlin.test.assertTrue
  * 2. 只有当环境变量中有 `STREAM_LLM_API_KEY` 时才会运行。
  * 3. 提交到 Git 安全。
  */
-// 只有当系统环境变量存在 STREAM_LLM_API_KEY 时，才执行此类中的测试
 @EnabledIfEnvironmentVariable(named = "STREAM_LLM_API_KEY", matches = ".+")
 class RealApiIntegrationTest {
 
-    // 从环境变量获取，如果没有则为空字符串（由于上面的注解，实际上为空时不会执行测试）
     private val apiKey = System.getenv("STREAM_LLM_API_KEY") ?: ""
-
-    // 如果需要支持自定义 BaseUrl，也可以读环境变量，或者给一个默认的公共地址
     private val baseUrl = System.getenv("STREAM_LLM_BASE_URL") ?: "https://api.siliconflow.cn/v1"
     private val model = System.getenv("STREAM_LLM_MODEL") ?: "Qwen/Qwen2.5-7B-Instruct"
 
     @Test
-    fun `test real chat completion`() = runTest {
-        // 初始化
-        StreamLLM.init(baseUrl, apiKey, model)
+    fun `test real chat completion with storage verification`() = runTest {
+        val storage = InMemoryStorage()
+
+        // 初始化：注入内存存储，方便验证数据是否落地
+        StreamLLM.init(
+            baseUrl = baseUrl,
+            apiKey = apiKey,
+            modelName = model,
+            storage = storage,
+            maxMemoryCount = 5
+        )
 
         println("=== Start Real Chat (Target: $baseUrl) ===")
         stream {
-            val question = "Hello, are you online?"
+            val question = "Hello, are you online? Answer YES or NO."
             println("User: $question")
 
             val answer = StringBuilder()
@@ -45,6 +52,20 @@ class RealApiIntegrationTest {
 
             assertTrue(answer.isNotEmpty())
         }
+
+        // 验证异步持久化
+        // 由于是 Fire-and-Forget，我们稍作延时确保协程执行完毕
+        // 在真实 Unit Test 中可以用 runTest 的 advanceUntilIdle，但这里涉及真实网络 IO，简单的 delay 更稳妥
+        delay(200)
+
+        // 验证数据是否写入了 Storage
+        val messages = storage.getMessages("default")
+        println("Stored Messages Count: ${messages.size}")
+
+        // 应该有 2 条消息：User 提问 + AI 回复
+        assertEquals(2, messages.size, "Storage should contain 2 messages (User + AI)")
+        assertEquals("Hello, are you online? Answer YES or NO.", messages[0].content)
+
         println("=== End Real Chat ===")
     }
 }
