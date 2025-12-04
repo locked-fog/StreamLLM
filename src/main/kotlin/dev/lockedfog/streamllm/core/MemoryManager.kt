@@ -33,6 +33,7 @@ data class ChatMessage(val role: ChatRole, val content: String)
  *
  * 用于控制单次对话请求如何与记忆管理器交互（读取历史上下文/写入新对话）。
  */
+@Suppress("unused")
 enum class MemoryStrategy {
     /**
      * (默认) 读写模式。

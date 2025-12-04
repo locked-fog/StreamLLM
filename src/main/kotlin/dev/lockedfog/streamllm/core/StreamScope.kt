@@ -228,6 +228,7 @@ class StreamScope {
      * @param onToken 接收生成的每个 Token 的回调函数。
      * @return 完整的响应文本。
      */
+    @Suppress("unused")
     suspend fun String.stream(
         promptTemplate: String = "",
         strategy: MemoryStrategy = MemoryStrategy.ReadWrite,
@@ -273,7 +274,7 @@ class StreamScope {
      *
      * 内部会先使用 [JsonSanitizer] 清洗字符串（移除 Markdown 标记等）。
      */
-    suspend inline fun <reified T> String.to(): T {
+    inline fun <reified T> String.to(): T {
         val jsonString = JsonSanitizer.sanitize(this)
         return try {
             StreamLLM.json.decodeFromString<T>(jsonString)
@@ -331,15 +332,9 @@ class StreamScope {
     }
 
     /**
-     * 打印日志的辅助方法。
-     */
-    fun Any.print() {
-        logger.info("[StreamLLM] {}", this)
-    }
-
-    /**
      * 清空当前活动记忆体的快捷方法。
      */
+    @Suppress("unused")
     suspend fun clearMemory() {
         StreamLLM.memory.clear()
     }
@@ -352,6 +347,7 @@ class StreamScope {
      * @param name 记忆体名称。
      * @param system (可选) 该记忆体的 System Prompt。
      */
+    @Suppress("unused")
     suspend fun newMemory(name: String, system: String? = null) {
         StreamLLM.memory.createMemory(name, system)
         StreamLLM.memory.switchMemory(name)
@@ -362,6 +358,7 @@ class StreamScope {
      *
      * @param name 记忆体名称。
      */
+    @Suppress("unused")
     suspend fun switchMemory(name: String) {
         StreamLLM.memory.switchMemory(name)
     }
@@ -371,6 +368,7 @@ class StreamScope {
      *
      * @param name 记忆体名称。
      */
+    @Suppress("unused")
     suspend fun deleteMemory(name: String) {
         StreamLLM.memory.deleteMemory(name)
     }
@@ -381,6 +379,7 @@ class StreamScope {
      * @param name 记忆体名称。
      * @param prompt 新的 System Prompt。
      */
+    @Suppress("unused")
     suspend fun setSystemPrompt(name: String, prompt: String) {
         StreamLLM.memory.updateSystemPrompt(name = name, prompt = prompt)
     }
