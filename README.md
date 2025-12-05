@@ -1,7 +1,7 @@
 # StreamLLM
 
-[](https://jitpack.io/#locked-fog/StreamLLM)
-[](https://opensource.org/licenses/MIT)
+[![](https://jitpack.io/v/locked-fog/StreamLLM.svg)](https://jitpack.io/#locked-fog/StreamLLM)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **StreamLLM** 是一个专为 Kotlin (JVM/Android) 开发者打造的轻量级、**完全非阻塞**且**协程原生**的 LLM 工作流编排库。
 
