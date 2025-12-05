@@ -41,7 +41,7 @@ data class OpenAiMessage(
     /** 角色 */
     val role: ChatRole,
     /** 内容 */
-    val content: ChatContent,
+    val content: ChatContent? = null,
     /** 名称（可选） */
     val name: String? = null,
     /** 工具调用（可选） */

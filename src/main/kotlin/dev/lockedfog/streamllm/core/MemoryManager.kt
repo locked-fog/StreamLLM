@@ -266,6 +266,17 @@ class MemoryManager(
         addMessageInternal(message)
     }
 
+    suspend fun addMessage(
+        role: ChatRole,
+        content: ChatContent,
+        toolCalls: List<ToolCall>? = null,
+        toolCallId: String? = null,
+        name: String? = null
+    ) {
+        val message = ChatMessage(role,content,name,toolCalls,toolCallId)
+        addMessageInternal(message)
+    }
+
 
     private suspend fun addMessageInternal(message: ChatMessage) {
         // 1. Write-Through: 先写内存

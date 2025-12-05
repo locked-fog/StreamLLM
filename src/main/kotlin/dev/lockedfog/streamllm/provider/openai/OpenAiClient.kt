@@ -60,7 +60,11 @@ class OpenAiClient(
         }
     }
 
-    private val jsonParser = Json { ignoreUnknownKeys = true }
+    private val jsonParser = Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+        coerceInputValues = true
+    }
 
     // 预处理 Endpoint，防止双斜杠问题
     private val chatEndpoint = "${baseUrl.trimEnd('/')}/chat/completions"

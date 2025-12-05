@@ -50,7 +50,7 @@ data class FunctionDefinition(
 data class ToolCall(
     val id: String = "", // [Fix] 允许流式片段中为空
     val type: String = "function",
-    val function: FunctionCall
+    val function: FunctionCall = FunctionCall()
 )
 
 /**
@@ -62,6 +62,6 @@ data class ToolCall(
  */
 @Serializable
 data class FunctionCall(
-    val name: String = "",       // [Fix] 默认为空，适配流式分片
-    val arguments: String = ""   // [Fix] 默认为空，适配流式分片
+    val name: String = "",
+    val arguments: String = ""
 )

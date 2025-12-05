@@ -1,6 +1,7 @@
 package dev.lockedfog.streamllm.core
 
 import dev.lockedfog.streamllm.StreamLLM
+import dev.lockedfog.streamllm.provider.LlmProvider
 import dev.lockedfog.streamllm.utils.HistoryFormatter
 import dev.lockedfog.streamllm.utils.JsonSanitizer
 import kotlinx.coroutines.coroutineScope
@@ -118,7 +119,7 @@ class StreamScope(
 
         // 3. 进入执行循环
         return executeLoop(
-            initialMessages = messages,
+            currentMessages = messages,
             options = effectiveOptions,
             shouldWriteHistory = shouldWriteHistory,
             onToken = onToken
@@ -129,7 +130,7 @@ class StreamScope(
      * 内部执行循环：处理 "Chat -> Tool -> Chat" 的递归流程。
      */
     private suspend fun executeLoop(
-        initialMessages: MutableList<ChatMessage>,
+        currentMessages: MutableList<ChatMessage>,
         options: GenerationOptions?,
         shouldWriteHistory: Boolean,
         onToken: (suspend (String) -> Unit)?
@@ -142,18 +143,33 @@ class StreamScope(
             // A. 流式处理
             if (onToken != null) {
                 // 流式模式下的聚合与执行
-                val (content, toolCalls) = executeStreamRequest(provider, initialMessages, options, onToken)
+                val (content, toolCalls) = executeStreamRequest(provider, currentMessages, options, onToken)
                 finalContent = content
 
                 // 如果没有工具调用，说明是最终回复，结束循环
                 if (toolCalls.isEmpty()) break
 
+                val assistantMsg = ChatMessage(
+                    role = ChatRole.ASSISTANT,
+                    content = ChatContent.Text(content), // <--- 关键修复：保留生成的文本
+                    toolCalls = toolCalls
+                )
+                currentMessages.add(assistantMsg)
+
+                // 写入记忆
+                if (shouldWriteHistory) {
+                     StreamLLM.memory.addMessage(
+                         role = ChatRole.ASSISTANT,
+                         content = assistantMsg.content,
+                         toolCalls = toolCalls)
+                }
+
                 // 处理工具调用 (流式聚合后的结果)
-                handleToolCalls(toolCalls, initialMessages, shouldWriteHistory)
+                handleToolCalls(toolCalls, currentMessages, shouldWriteHistory)
             }
             // B. 非流式处理
             else {
-                val response = provider.chat(initialMessages, options)
+                val response = provider.chat(currentMessages.toList(), options)
                 this.lastUsage = response.usage
                 finalContent = response.content
 
@@ -163,7 +179,7 @@ class StreamScope(
                     content = ChatContent.Text(response.content), // 即使是空串也要放
                     toolCalls = response.toolCalls
                 )
-                initialMessages.add(assistantMsg)
+                currentMessages.add(assistantMsg)
                 if (shouldWriteHistory) {
                     StreamLLM.memory.addMessage(assistantMsg.role,assistantMsg.content) // 需适配完整对象存储
                 }
@@ -174,7 +190,7 @@ class StreamScope(
                 }
 
                 // 执行工具并追加结果到 currentMessages
-                handleToolCalls(response.toolCalls, initialMessages, shouldWriteHistory)
+                handleToolCalls(response.toolCalls, currentMessages, shouldWriteHistory)
             }
 
             round++
@@ -191,7 +207,7 @@ class StreamScope(
      * 执行单次流式请求，并负责聚合 Content 和 ToolCalls。
      */
     private suspend fun executeStreamRequest(
-        provider: dev.lockedfog.streamllm.provider.LlmProvider,
+        provider: LlmProvider,
         messages: List<ChatMessage>,
         options: GenerationOptions?,
         onToken: suspend (String) -> Unit
@@ -219,7 +235,7 @@ class StreamScope(
         }
 
         coroutineScope {
-            provider.stream(messages, options)
+            provider.stream(messages.toList(), options)
                 .onCompletion {
                     // 流结束，强制 Flush 剩余文本
                     mutex.lock()
@@ -247,7 +263,11 @@ class StreamScope(
                             if (fragment.id.isNotEmpty()) builder.id = fragment.id
                             if (fragment.type.isNotEmpty()) builder.type = fragment.type
                             if (fragment.function.name.isNotEmpty()) builder.name = fragment.function.name
-                            if (fragment.function.arguments.isNotEmpty()) builder.arguments.append(fragment.function.arguments)
+                            if (fragment.function.arguments.isNotEmpty()) builder
+                                .arguments
+                                .append(fragment
+                                    .function
+                                    .arguments)
                         }
                     }
 
@@ -271,28 +291,6 @@ class StreamScope(
         currentMessages: MutableList<ChatMessage>,
         shouldWriteHistory: Boolean
     ) {
-        // 1. 确保上一条 Assistant 消息已记录 (包含 tool_calls)
-        // 在流式中，content 是逐步 append 的，但 assistant 消息作为一个整体需要在 tool 之前存入
-        // 注意：executeLoop 的非流式分支已经加过了，流式分支返回后需要补加
-        // 这里为了统一逻辑，我们检查最后一条是否包含这些 toolCalls，如果不包含则说明是流式刚结束，需要补一条 Assistant Msg
-        val lastMsg = currentMessages.lastOrNull()
-        if (lastMsg == null || lastMsg.role != ChatRole.ASSISTANT || lastMsg.toolCalls != toolCalls) {
-            // 构造 Assistant Message (Content 可能为空)
-            val assistantMsg = ChatMessage(
-                role = ChatRole.ASSISTANT,
-                content = ChatContent.Text(""), // 流式通常 Tool Call 时 content 为空
-                toolCalls = toolCalls
-            )
-            currentMessages.add(assistantMsg)
-            if (shouldWriteHistory) {
-                // 暂时使用 addMessage 适配，理想情况需支持存储完整 ChatMessage
-                // 这里做一个折中，如果 storage 不支持复杂对象，可能丢失数据
-                // 假设 v0.4.0 的 MemoryManager 已更新支持完整对象
-                StreamLLM.memory.addMessage(ChatRole.ASSISTANT, "")
-                // TODO: 需调用 storage.addMessage(id, assistantMsg)
-            }
-        }
-
         // 2. 并行/串行执行所有工具
         toolCalls.forEach { call ->
             val functionName = call.function.name
@@ -319,8 +317,12 @@ class StreamScope(
             currentMessages.add(toolMsg)
 
             if (shouldWriteHistory) {
-                // 同样，需确保持久化层支持 Tool 角色
-                StreamLLM.memory.addMessage(ChatRole.TOOL, result)
+                StreamLLM.memory.addMessage(
+                    role = ChatRole.TOOL,
+                    content = toolMsg.content,
+                    toolCallId = call.id,
+                    name = functionName
+                )
             }
         }
     }
@@ -491,6 +493,84 @@ class StreamScope(
     }
 
     /**
+     * 发送多模态消息 (非流式)。
+     *
+     * [v0.4.0 New] 允许直接发送图片、视频等复杂内容。
+     * 注意：多模态请求不支持 Prompt Template 替换。
+     */
+    suspend fun ChatContent.ask(
+        strategy: MemoryStrategy = MemoryStrategy.ReadWrite,
+        historyWindow: Int = -1,
+        system: String? = null,
+        options: GenerationOptions? = null,
+        onToken: (suspend (String) -> Unit)? = null
+    ): String {
+        val (messages, shouldWriteHistory) = prepareContext(
+            input = this,
+            strategy = strategy,
+            historyWindow = historyWindow,
+            system = system
+        )
+
+        val effectiveOptions = mergeOptionsWithTools(options)
+
+        return executeLoop(
+            currentMessages = messages,
+            options = effectiveOptions,
+            shouldWriteHistory = shouldWriteHistory,
+            onToken = onToken
+        )
+    }
+
+    suspend fun ChatContent.stream(
+        strategy: MemoryStrategy = MemoryStrategy.ReadWrite,
+        historyWindow: Int = -1,
+        system: String? = null,
+        options: GenerationOptions? = null,
+        block: suspend (String) -> Unit
+    ): String {
+        return this.ask(strategy, historyWindow, system, options) { token ->
+            block(token)
+        }
+    }
+
+    private suspend fun prepareContext(
+        input: ChatContent,
+        strategy: MemoryStrategy,
+        historyWindow: Int,
+        system: String?
+    ): Pair<MutableList<ChatMessage>, Boolean> {
+        val shouldReadHistory = strategy == MemoryStrategy.ReadWrite || strategy == MemoryStrategy.ReadOnly
+        val shouldWriteHistory = strategy == MemoryStrategy.ReadWrite || strategy == MemoryStrategy.WriteOnly
+
+        val messagesToSend = mutableListOf<ChatMessage>()
+
+        // 1. 自动注入历史
+        if (shouldReadHistory) {
+            val history = StreamLLM.memory.getCurrentHistory(windowSize = historyWindow, tempSystem = system, includeSystem = true)
+            messagesToSend.addAll(history)
+        } else {
+            // 即使不读历史，也要尝试带上 System Prompt
+            val memorySystem = StreamLLM.memory.getCurrentHistory(0, null, true)
+                .firstOrNull { it.role == ChatRole.SYSTEM }?.content
+            val activeSystemContent = if (system != null) ChatContent.Text(system) else memorySystem
+
+            if (activeSystemContent != null && activeSystemContent.hasContent()) {
+                messagesToSend.add(ChatMessage(ChatRole.SYSTEM, activeSystemContent))
+            }
+        }
+
+        // 2. 添加当前多模态消息
+        messagesToSend.add(ChatMessage(ChatRole.USER, input))
+
+        if (shouldWriteHistory) {
+            StreamLLM.memory.addMessage(ChatRole.USER, input)
+        }
+
+        return messagesToSend to shouldWriteHistory
+    }
+
+    /**
      * 将字符串直接反序列化为指定类型的对象。
      */
     inline fun <reified T> String.to(): T {
@@ -506,6 +586,7 @@ class StreamScope(
     /**
      * 结构化数据提取方法 (带自动重试)。
      */
+    @Suppress("unused")
     suspend inline fun <reified T> String.ask(
         promptTemplate: String = "",
         strategy: MemoryStrategy = MemoryStrategy.ReadWrite,
