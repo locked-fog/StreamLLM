@@ -16,7 +16,6 @@ import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
  * v0.4.0 新特性的虚拟环境集成测试。

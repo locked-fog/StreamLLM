@@ -3,7 +3,6 @@ package dev.lockedfog.streamllm.core
 import dev.lockedfog.streamllm.StreamLLM
 import dev.lockedfog.streamllm.provider.openai.OpenAiChatRequest
 import dev.lockedfog.streamllm.provider.openai.OpenAiMessage
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.jupiter.api.Test
