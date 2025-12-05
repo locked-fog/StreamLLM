@@ -2,9 +2,11 @@ package dev.lockedfog.streamllm.provider.openai
 
 import dev.lockedfog.streamllm.core.ChatContent
 import dev.lockedfog.streamllm.core.ChatRole
+import dev.lockedfog.streamllm.core.Tool
 import dev.lockedfog.streamllm.core.ToolCall
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /**
  * OpenAI Chat Completion API 请求体。
@@ -25,8 +27,10 @@ data class OpenAiChatRequest(
     @SerialName("max_tokens") val maxTokens: Int? = null,
     /** 停止序列 */
     val stop: List<String>? = null,
-    // 可选：某些厂商可能需要显式配置以返回 usage
-    // @SerialName("stream_options") val streamOptions: StreamOptions? = null
+    /** 可用工具列表 */
+    val tools: List<Tool>? = null,
+    /** 工具选择策略 */
+    @SerialName("tool_choice") val toolChoice: JsonElement? = null
 )
 
 /**
@@ -42,7 +46,7 @@ data class OpenAiMessage(
     val name: String? = null,
     /** 工具调用（可选） */
     @SerialName("tool_calls") val toolCalls: List<ToolCall>? = null,
-    /** 工具调用ID（可选） */
+    /** 工具调用ID（可选，Tool Role 必须） */
     @SerialName("tool_call_id") val toolCallId: String? = null
 )
 

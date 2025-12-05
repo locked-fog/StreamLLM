@@ -99,7 +99,7 @@ data class MediaUrl(
 data class VideoDetailUrl(
     val url: String,
     val detail: String? = "auto",
-    @SerialName("max_frames") val maxFrames: Int? = null,
+    @SerialName("max_frams") val maxFrames: Int? = null,
     val fps: Int? = null
 )
 
@@ -111,19 +111,23 @@ object ChatContentSerializer : KSerializer<ChatContent> {
 
     override fun deserialize(decoder: Decoder): ChatContent {
         val input = decoder as? JsonDecoder ?: throw SerializationException("Expected JsonDecoder")
-        val element = input.decodeJsonElement()
+        return when (val element = input.decodeJsonElement()) {
+            is JsonPrimitive if element.isString -> {
+                ChatContent.Text(element.content)
+            }
 
-        return if (element is JsonPrimitive && element.isString) {
-            ChatContent.Text(element.content)
-        } else if (element is JsonArray) {
-            val parts = input.json.decodeFromJsonElement(
-                ListSerializer(ContentPart.serializer()),
-                element
-            )
-            ChatContent.Parts(parts)
-        } else {
-            // 容错：遇到 null 或其他类型时返回空文本
-            ChatContent.Text("")
+            is JsonArray -> {
+                val parts = input.json.decodeFromJsonElement(
+                    ListSerializer(ContentPart.serializer()),
+                    element
+                )
+                ChatContent.Parts(parts)
+            }
+
+            else -> {
+                // 容错：遇到 null 或其他类型时返回空文本
+                ChatContent.Text("")
+            }
         }
     }
 

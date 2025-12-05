@@ -94,7 +94,10 @@ class OpenAiClient(
             temperature = options?.temperature,
             topP = options?.topP,
             maxTokens = options?.maxTokens,
-            stop = options?.stopSequences
+            stop = options?.stopSequences,
+            // [v0.4.0 New] 注入工具定义
+            tools = options?.tools,
+            toolChoice = options?.toolChoice
         )
     }
 
@@ -207,7 +210,7 @@ class OpenAiClient(
                                 val reasoning = delta.reasoningContent
                                 val toolCalls = delta.toolCalls
 
-                                if (content.isNotEmpty() || reasoning != null || toolCalls != null){
+                                if (content.isNotEmpty() || reasoning != null || !toolCalls.isNullOrEmpty()){
                                     emit(LlmResponse(
                                         content = content,
                                         usage = null,
@@ -216,7 +219,6 @@ class OpenAiClient(
                                     ))
                                 }
                             }
-
 
                             // 2. 发送 Usage (通常在最后一个 Chunk)
                             if (chunk.usage != null) {

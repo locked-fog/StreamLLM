@@ -249,8 +249,25 @@ class MemoryManager(
      * @param content 内容。
      */
     suspend fun addMessage(role: ChatRole, content: String) {
-        val message = ChatMessage(role, content)
+        addMessage(role, ChatContent.Text(content))
+    }
 
+
+    /**
+     * 向当前活动的记忆体中添加一条多模态消息。
+     *
+     * 相比 [addMessage(ChatRole, String)]，此方法支持保存图片、视频等完整结构。
+     *
+     * @param role 角色。
+     * @param content 封装好的多模态内容对象。
+     */
+    suspend fun addMessage(role: ChatRole, content: ChatContent) {
+        val message = ChatMessage(role = role, content = content)
+        addMessageInternal(message)
+    }
+
+
+    private suspend fun addMessageInternal(message: ChatMessage) {
         // 1. Write-Through: 先写内存
         cacheLock.withLock {
             val context = cache.computeIfAbsent(currentMemoryId) { MemoryContext() }

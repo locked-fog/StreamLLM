@@ -4,43 +4,94 @@ import dev.lockedfog.streamllm.StreamLLM
 import dev.lockedfog.streamllm.utils.HistoryFormatter
 import dev.lockedfog.streamllm.utils.JsonSanitizer
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonElement
 import org.slf4j.LoggerFactory
 import java.lang.IllegalStateException
 
 /**
  * StreamLLM 的 DSL 执行上下文作用域。
  *
- * 提供了用于编排 LLM 对话的核心方法（ask, stream），以及管理记忆和上下文的辅助函数。
+ * 提供了用于编排 LLM 对话的核心方法（ask, stream），管理记忆，以及注册和执行工具（Tool Calling）。
  * 通常在 `stream { ... }` 块中使用此类。
+ *
+ * @property maxToolRounds 最大工具递归轮数。防止模型陷入无限调用工具的死循环。默认为 5。
  */
-class StreamScope {
+class StreamScope(
+    private val maxToolRounds: Int = 5
+) {
     @PublishedApi
     internal val logger = LoggerFactory.getLogger(StreamScope::class.java)
 
     /**
      * 获取最近一次请求的 Token 用量统计。
-     *
      * 如果请求支持返回 Usage 信息，该字段会在请求完成后更新。
      */
     var lastUsage: Usage? = null
         private set
 
+    // --- 工具调用相关状态 ---
+
+    // 已注册的工具定义 (发送给 LLM 用)
+    private val registeredTools = mutableListOf<Tool>()
+
+    // 工具执行逻辑映射 (函数名 -> 执行Lambda)
+    private val toolExecutors = mutableMapOf<String, suspend (String) -> String>()
+
+    /**
+     * 注册一个工具 (Function Tool)。
+     *
+     * 注册后，该工具的信息会被添加到后续的 `ask` 或 `stream` 请求中。
+     * 当模型决定调用此工具时，会自动执行 [executor] 并将结果反馈给模型。
+     *
+     * @param name 工具名称 (只能包含字母、数字、下划线, e.g., "get_weather")。
+     * @param description 工具描述，告诉模型这个工具是做什么的。
+     * @param parametersJson Schema 定义 (JSON String)，描述参数结构。建议使用 Kotlinx Serialization 生成或手动编写。
+     * @param executor 工具的具体执行逻辑。接收 JSON 格式的参数字符串，返回 String 结果。
+     */
+    @Suppress("unused")
+    fun registerTool(
+        name: String,
+        description: String? = null,
+        parametersJson: String = "{}",
+        executor: suspend (String) -> String
+    ) {
+        val paramsElement = try {
+            StreamLLM.json.decodeFromString<JsonElement>(parametersJson)
+        } catch (e: Exception) {
+            throw IllegalArgumentException("Invalid JSON schema for tool '$name'", e)
+        }
+
+        val functionDef = FunctionDefinition(
+            name = name,
+            description = description,
+            parameters = paramsElement
+        )
+        val tool = Tool(type = "function", function = functionDef)
+
+        registeredTools.add(tool)
+        toolExecutors[name] = executor
+    }
+
     /**
      * 发送 LLM 请求的核心方法。
      *
-     * 根据提供的参数构建 Prompt，处理历史记录注入，并调用底层的 Provider 发送请求。
+     * 支持自动化的工具调用循环 (Re-Act Loop)：
+     * 1. 发送 Prompt。
+     * 2. 如果模型返回 Tool Calls，自动执行对应 Kotlin 函数。
+     * 3. 将执行结果作为 Tool Message 存入记忆。
+     * 4. 携带结果再次请求模型，直到模型输出最终文本。
      *
-     * @param promptTemplate 提示词模版。支持 `{{it}}` (代表当前字符串内容) 和 `{{history}}` (手动注入历史) 占位符。
-     * @param strategy 记忆策略。控制是否读取历史上下文以及是否记录本次对话。默认为 [MemoryStrategy.ReadWrite]。
-     * @param historyWindow 历史窗口大小。-1 代表全部，0 代表无，N 代表最近 N 条。默认为 -1。
-     * @param system 临时 System Prompt。如果提供，将覆盖当前记忆体的默认设定。
-     * @param formatter 自定义历史记录格式化器字符串。仅在 [promptTemplate] 包含 `{{history}}` 时生效。
+     * @param promptTemplate 提示词模版。支持 `{{it}}` (当前字符串) 和 `{{history}}` 占位符。
+     * @param strategy 记忆策略。默认为 [MemoryStrategy.ReadWrite]。
+     * @param historyWindow 历史窗口大小。-1 代表全部。
+     * @param system 临时 System Prompt。
+     * @param formatter 自定义历史记录格式化器。
      * @param options 生成选项 (Temperature, MaxTokens 等)。
-     * @param onToken 流式回调。如果提供此参数，请求将以流式 (Streaming) 方式执行，每收到一个 Token 回调一次。
-     * 该回调是 suspend 函数，支持在其中执行耗时挂起操作。
+     * @param onToken 流式回调。如果提供此参数，请求将以流式 (Streaming) 方式执行。
      * @return 完整的响应文本。
      */
     suspend fun String.ask(
@@ -52,9 +103,257 @@ class StreamScope {
         options: GenerationOptions? = null,
         onToken: (suspend (String) -> Unit)? = null
     ): String {
-        val provider = StreamLLM.defaultProvider ?: throw IllegalStateException("StreamLLM Not Initialized")
+        // 1. 初始化消息与策略
+        val (messages, shouldWriteHistory) = prepareContext(
+            input = this,
+            promptTemplate = promptTemplate,
+            strategy = strategy,
+            historyWindow = historyWindow,
+            system = system,
+            formatter = formatter
+        )
 
-        // 1. 计算策略
+        // 2. 合并 Options (注入已注册的 Tools)
+        val effectiveOptions = mergeOptionsWithTools(options)
+
+        // 3. 进入执行循环
+        return executeLoop(
+            initialMessages = messages,
+            options = effectiveOptions,
+            shouldWriteHistory = shouldWriteHistory,
+            onToken = onToken
+        )
+    }
+
+    /**
+     * 内部执行循环：处理 "Chat -> Tool -> Chat" 的递归流程。
+     */
+    private suspend fun executeLoop(
+        initialMessages: MutableList<ChatMessage>,
+        options: GenerationOptions?,
+        shouldWriteHistory: Boolean,
+        onToken: (suspend (String) -> Unit)?
+    ): String {
+        val provider = StreamLLM.defaultProvider ?: throw IllegalStateException("StreamLLM Not Initialized")
+        var round = 0
+        var finalContent = ""
+
+        while (round <= maxToolRounds) {
+            // A. 流式处理
+            if (onToken != null) {
+                // 流式模式下的聚合与执行
+                val (content, toolCalls) = executeStreamRequest(provider, initialMessages, options, onToken)
+                finalContent = content
+
+                // 如果没有工具调用，说明是最终回复，结束循环
+                if (toolCalls.isEmpty()) break
+
+                // 处理工具调用 (流式聚合后的结果)
+                handleToolCalls(toolCalls, initialMessages, shouldWriteHistory)
+            }
+            // B. 非流式处理
+            else {
+                val response = provider.chat(initialMessages, options)
+                this.lastUsage = response.usage
+                finalContent = response.content
+
+                // 记录 Assistant 回复 (可能包含 content 和 tool_calls)
+                val assistantMsg = ChatMessage(
+                    role = ChatRole.ASSISTANT,
+                    content = ChatContent.Text(response.content), // 即使是空串也要放
+                    toolCalls = response.toolCalls
+                )
+                initialMessages.add(assistantMsg)
+                if (shouldWriteHistory) {
+                    StreamLLM.memory.addMessage(assistantMsg.role,assistantMsg.content) // 需适配完整对象存储
+                }
+
+                // 检查是否需要执行工具
+                if (response.toolCalls.isNullOrEmpty()) {
+                    break // 正常结束
+                }
+
+                // 执行工具并追加结果到 currentMessages
+                handleToolCalls(response.toolCalls, initialMessages, shouldWriteHistory)
+            }
+
+            round++
+        }
+
+        if (round > maxToolRounds) {
+            logger.warn("Max tool rounds ($maxToolRounds) exceeded. Stopping execution.")
+        }
+
+        return finalContent
+    }
+
+    /**
+     * 执行单次流式请求，并负责聚合 Content 和 ToolCalls。
+     */
+    private suspend fun executeStreamRequest(
+        provider: dev.lockedfog.streamllm.provider.LlmProvider,
+        messages: List<ChatMessage>,
+        options: GenerationOptions?,
+        onToken: suspend (String) -> Unit
+    ): Pair<String, List<ToolCall>> {
+        val sb = StringBuilder()
+        // 用于聚合分片的 ToolCalls: Index -> ToolCallBuilder
+        val toolCallAccumulator = mutableMapOf<Int, ToolCallBuilder>()
+
+        // 1. 数据流 (Buffer) + 2. 锁 (Lock) -> 实现背压与跳过 (Adaptive Batching)
+        val streamBuffer = StringBuffer()
+        val mutex = Mutex()
+
+        val processStream = suspend {
+            val chunk = synchronized(streamBuffer) {
+                if (streamBuffer.isNotEmpty()) {
+                    val content = streamBuffer.toString()
+                    streamBuffer.setLength(0)
+                    content
+                } else null
+            }
+            if (!chunk.isNullOrEmpty()) {
+                onToken(chunk)
+                sb.append(chunk)
+            }
+        }
+
+        coroutineScope {
+            provider.stream(messages, options)
+                .onCompletion {
+                    // 流结束，强制 Flush 剩余文本
+                    mutex.lock()
+                    try { processStream() } finally { mutex.unlock() }
+                }
+                .collect { res ->
+                    // A. 处理文本内容
+                    if (res.content.isNotEmpty()) {
+                        synchronized(streamBuffer) {
+                            streamBuffer.append(res.content)
+                        }
+                        // 尝试触发回调 (Skip 机制)
+                        if (mutex.tryLock()) {
+                            launch {
+                                try { processStream() } finally { mutex.unlock() }
+                            }
+                        }
+                    }
+
+                    // B. 聚合工具调用 (Tool Calls 也是流式的)
+                    if (!res.toolCalls.isNullOrEmpty()) {
+                        res.toolCalls.forEachIndexed { index, fragment ->
+                            val builder = toolCallAccumulator.getOrPut(index) { ToolCallBuilder() }
+                            // 累加各个字段
+                            if (fragment.id.isNotEmpty()) builder.id = fragment.id
+                            if (fragment.type.isNotEmpty()) builder.type = fragment.type
+                            if (fragment.function.name.isNotEmpty()) builder.name = fragment.function.name
+                            if (fragment.function.arguments.isNotEmpty()) builder.arguments.append(fragment.function.arguments)
+                        }
+                    }
+
+                    if (res.usage != null) {
+                        this@StreamScope.lastUsage = res.usage
+                    }
+                }
+        }
+
+        // 构建最终的 ToolCall 列表
+        val finalToolCalls = toolCallAccumulator.values.map { it.build() }
+
+        return sb.toString() to finalToolCalls
+    }
+
+    /**
+     * 处理工具调用逻辑：执行函数 -> 记录结果 -> 更新消息列表。
+     */
+    private suspend fun handleToolCalls(
+        toolCalls: List<ToolCall>,
+        currentMessages: MutableList<ChatMessage>,
+        shouldWriteHistory: Boolean
+    ) {
+        // 1. 确保上一条 Assistant 消息已记录 (包含 tool_calls)
+        // 在流式中，content 是逐步 append 的，但 assistant 消息作为一个整体需要在 tool 之前存入
+        // 注意：executeLoop 的非流式分支已经加过了，流式分支返回后需要补加
+        // 这里为了统一逻辑，我们检查最后一条是否包含这些 toolCalls，如果不包含则说明是流式刚结束，需要补一条 Assistant Msg
+        val lastMsg = currentMessages.lastOrNull()
+        if (lastMsg == null || lastMsg.role != ChatRole.ASSISTANT || lastMsg.toolCalls != toolCalls) {
+            // 构造 Assistant Message (Content 可能为空)
+            val assistantMsg = ChatMessage(
+                role = ChatRole.ASSISTANT,
+                content = ChatContent.Text(""), // 流式通常 Tool Call 时 content 为空
+                toolCalls = toolCalls
+            )
+            currentMessages.add(assistantMsg)
+            if (shouldWriteHistory) {
+                // 暂时使用 addMessage 适配，理想情况需支持存储完整 ChatMessage
+                // 这里做一个折中，如果 storage 不支持复杂对象，可能丢失数据
+                // 假设 v0.4.0 的 MemoryManager 已更新支持完整对象
+                StreamLLM.memory.addMessage(ChatRole.ASSISTANT, "")
+                // TODO: 需调用 storage.addMessage(id, assistantMsg)
+            }
+        }
+
+        // 2. 并行/串行执行所有工具
+        toolCalls.forEach { call ->
+            val functionName = call.function.name
+            val argsJson = call.function.arguments
+
+            logger.info("Executing Tool: $functionName with args: $argsJson")
+
+            val result = try {
+                val executor = toolExecutors[functionName]
+                    ?: throw IllegalStateException("Tool '$functionName' not registered.")
+                executor(argsJson)
+            } catch (e: Exception) {
+                logger.error("Tool execution failed", e)
+                "Error executing tool '$functionName': ${e.message}"
+            }
+
+            // 3. 构造 Tool Message
+            val toolMsg = ChatMessage(
+                role = ChatRole.TOOL,
+                content = ChatContent.Text(result),
+                toolCallId = call.id,
+                name = functionName
+            )
+            currentMessages.add(toolMsg)
+
+            if (shouldWriteHistory) {
+                // 同样，需确保持久化层支持 Tool 角色
+                StreamLLM.memory.addMessage(ChatRole.TOOL, result)
+            }
+        }
+    }
+
+    // --- 辅助方法 ---
+
+    private fun ToolCallBuilder.build(): ToolCall {
+        return ToolCall(
+            id = this.id ?: "",
+            type = this.type ?: "function",
+            function = FunctionCall(
+                name = this.name ?: "",
+                arguments = this.arguments.toString()
+            )
+        )
+    }
+
+    // 内部 Builder 类，用于聚合流式片段
+    private class ToolCallBuilder {
+        var id: String? = null
+        var type: String? = null
+        var name: String? = null
+        val arguments = StringBuilder()
+    }
+
+    private suspend fun prepareContext(
+        input: String,
+        promptTemplate: String,
+        strategy: MemoryStrategy,
+        historyWindow: Int,
+        system: String?,
+        formatter: String?
+    ): Pair<MutableList<ChatMessage>, Boolean> {
         val shouldReadHistory = strategy == MemoryStrategy.ReadWrite || strategy == MemoryStrategy.ReadOnly
         val shouldWriteHistory = strategy == MemoryStrategy.ReadWrite || strategy == MemoryStrategy.WriteOnly
 
@@ -62,13 +361,12 @@ class StreamScope {
             throw IllegalArgumentException("Conflict: Template contains '{{history}}' but strategy is '$strategy'.")
         }
 
-        // 2. 准备消息
-        var finalInput = this
+        var finalInput = input
         val messagesToSend = mutableListOf<ChatMessage>()
 
-        // 2.1 模板与手动注入
+        // 模板与手动注入逻辑
         if (promptTemplate.isNotBlank()) {
-            finalInput = promptTemplate.replace("{{it}}", this)
+            finalInput = promptTemplate.replace("{{it}}", input)
             if (promptTemplate.contains("{{history}}")) {
                 val historyList = StreamLLM.memory.getCurrentHistory(historyWindow, system, includeSystem = false)
                 val historyFormatter = if (formatter != null) HistoryFormatter.fromString(formatter) else HistoryFormatter.DEFAULT
@@ -85,14 +383,14 @@ class StreamScope {
             }
         }
 
-        // 2.2 自动注入
+        // 自动注入逻辑
         if (shouldReadHistory && !promptTemplate.contains("{{history}}")) {
             val history = StreamLLM.memory.getCurrentHistory(windowSize = historyWindow, tempSystem = system, includeSystem = true)
             messagesToSend.addAll(history)
         } else if (!promptTemplate.contains("{{history}}")) {
+            // 即使不读历史，也要尝试带上 System Prompt
             val memorySystem = StreamLLM.memory.getCurrentHistory(0, null, true)
                 .firstOrNull { it.role == ChatRole.SYSTEM }?.content
-
             val activeSystemContent = if (system != null) ChatContent.Text(system) else memorySystem
 
             if (activeSystemContent != null && activeSystemContent.hasContent()) {
@@ -103,105 +401,34 @@ class StreamScope {
         messagesToSend.add(ChatMessage(ChatRole.USER, finalInput))
 
         if (shouldWriteHistory) {
-            StreamLLM.memory.addMessage(ChatRole.USER, this)
+            StreamLLM.memory.addMessage(ChatRole.USER, input)
         }
 
-        // 3. 调用 Provider
-        var responseContent: String
-
-        if (onToken != null) {
-            val sb = StringBuilder()
-
-            // --- 核心实现开始: 自适应批处理 (Adaptive Batching with Skipping) ---
-
-            // 1. 数据流 (Buffer)：使用 StringBuffer (线程安全) 配合 synchronized 块保证原子性
-            val streamBuffer = StringBuffer()
-
-            // 2. 锁 (Lock)：控制 Lambda 的访问，确保同一时间只有一个 Lambda 在处理
-            val mutex = Mutex()
-
-            // 3. 定义处理函数：从 Stream 中“读取并清除”数据
-            val processStream = suspend {
-                val chunk = synchronized(streamBuffer) {
-                    if (streamBuffer.isNotEmpty()) {
-                        val content = streamBuffer.toString()
-                        streamBuffer.setLength(0) // 清空流
-                        content
-                    } else {
-                        null
-                    }
-                }
-
-                // 如果拿到了数据，就调用用户的 Lambda
-                if (!chunk.isNullOrEmpty()) {
-                    onToken(chunk)
-                    sb.append(chunk)
-                }
-            }
-
-            // 使用 coroutineScope 确保所有子协程完成后才返回
-            coroutineScope {
-                // 启动网络消费者
-                provider.stream(messagesToSend, options).collect { res ->
-                    // A. 网络层：快速写入 Buffer
-                    if (res.content.isNotEmpty()) {
-                        synchronized(streamBuffer) {
-                            streamBuffer.append(res.content)
-                        }
-                    }
-
-                    // B. 尝试触发 Lambda：尝试获取锁 (TryLock)
-                    // 如果获取成功，说明当前没有 Lambda 在运行，启动新协程处理
-                    // 如果获取失败，说明 Lambda 正忙，直接跳过 (Skip)，让数据积压在 Buffer 中等待下一次处理
-                    if (mutex.tryLock()) {
-                        launch {
-                            try {
-                                processStream()
-                            } finally {
-                                mutex.unlock() // 处理完自动解锁
-                            }
-                        }
-                    }
-
-                    if (res.usage != null) {
-                        this@StreamScope.lastUsage = res.usage
-                    }
-                }
-
-                // --- Flush (处理最后的数据) ---
-                // 流结束后，必须等待锁释放，并处理 Buffer 中残留的数据
-                mutex.lock() // 挂起等待正在运行的 Lambda 结束
-                try {
-                    processStream() // 处理剩余数据 (Flush)
-                } finally {
-                    mutex.unlock()
-                }
-            }
-            // --- 核心实现结束 ---
-
-            responseContent = sb.toString()
-        } else {
-            // 非流式处理
-            val llmResponse = provider.chat(messagesToSend, options)
-            responseContent = llmResponse.content
-            this@StreamScope.lastUsage = llmResponse.usage
-        }
-
-        // 4. 记录历史
-        if (shouldWriteHistory) {
-            StreamLLM.memory.addMessage(ChatRole.ASSISTANT, responseContent)
-        }
-
-        return responseContent
+        return messagesToSend to shouldWriteHistory
     }
 
-    // --- 重载方法适配 ---
+    private fun mergeOptionsWithTools(original: GenerationOptions?): GenerationOptions {
+        val base = original ?: GenerationOptions()
+        // 如果当前有注册工具，则将其加入 options
+        return if (registeredTools.isNotEmpty()) {
+            // 注意：这里我们假设 options.tools 是用户手动传的，我们做合并
+            val combinedTools = (base.tools.orEmpty() + registeredTools).distinctBy { it.function.name }
+            base.copy(tools = combinedTools)
+        } else {
+            base
+        }
+    }
 
-    /**
-     * [ask] 的重载版本，将 [GenerationOptions] 的参数展开，方便调用。
-     *
-     * @see ask
-     */
+    private fun ChatContent.hasContent(): Boolean {
+        return when (this) {
+            is ChatContent.Text -> this.text.isNotBlank()
+            is ChatContent.Parts -> this.parts.isNotEmpty()
+        }
+    }
+
+    // --- 重载方法适配 (保持 API 兼容) ---
+
+    @Suppress("unused")
     suspend fun String.ask(
         promptTemplate: String = "",
         strategy: MemoryStrategy = MemoryStrategy.ReadWrite,
@@ -225,14 +452,6 @@ class StreamScope {
         return this.ask(promptTemplate, strategy, historyWindow, system, formatter, opts, onToken)
     }
 
-    /**
-     * 发送流式请求的快捷方法。
-     *
-     * 等同于调用 [ask] 并传入 [onToken] 回调。
-     *
-     * @param onToken 接收生成的每个 Token 的回调函数。
-     * @return 完整的响应文本。
-     */
     @Suppress("unused")
     suspend fun String.stream(
         promptTemplate: String = "",
@@ -257,9 +476,6 @@ class StreamScope {
         return this.ask(promptTemplate, strategy, historyWindow, system, formatter, opts, onToken)
     }
 
-    /**
-     * 发送流式请求的重载方法，接受挂起函数作为回调。
-     */
     suspend fun String.stream(
         promptTemplate: String = "",
         strategy: MemoryStrategy = MemoryStrategy.ReadWrite,
@@ -276,8 +492,6 @@ class StreamScope {
 
     /**
      * 将字符串直接反序列化为指定类型的对象。
-     *
-     * 内部会先使用 [JsonSanitizer] 清洗字符串（移除 Markdown 标记等）。
      */
     inline fun <reified T> String.to(): T {
         val jsonString = JsonSanitizer.sanitize(this)
@@ -290,14 +504,7 @@ class StreamScope {
     }
 
     /**
-     * 结构化数据提取方法。
-     *
-     * 发送请求并将结果自动解析为类型 [T]。
-     * 包含自动纠错机制：如果 JSON 解析失败，会自动将错误信息反馈给模型进行重试。
-     *
-     * @param maxRetries 最大自动重试次数。默认为 3。
-     * @return 解析后的对象 [T]。
-     * @throws IllegalStateException 如果重试多次后仍然失败。
+     * 结构化数据提取方法 (带自动重试)。
      */
     suspend inline fun <reified T> String.ask(
         promptTemplate: String = "",
@@ -309,24 +516,18 @@ class StreamScope {
         options: GenerationOptions? = null
     ): T {
         var currentResponse = this.ask(promptTemplate, strategy, historyWindow, system, formatter, options)
-
         var attempt = 0
         while (attempt <= maxRetries) {
             try {
                 return currentResponse.to<T>()
             } catch (e: Exception) {
-                // 仅针对序列化错误重试，网络错误/鉴权错误等 LlmException 直接抛出
                 if (e is SerializationException || e is IllegalArgumentException) {
                     attempt++
                     if (attempt > maxRetries) throw e
-
                     logger.warn("[Auto-Fix] Retrying {}/{} due to JSON error: {}", attempt, maxRetries, e.message)
-
                     val fixOptions = (options ?: GenerationOptions()).copy(temperature = 0.1)
                     val fixPrompt = "Previous JSON invalid: ${e.message}. Return ONLY JSON. Original content: $currentResponse"
                     val messages = listOf(ChatMessage(ChatRole.USER, fixPrompt))
-
-                    // 获取修正结果
                     currentResponse = StreamLLM.defaultProvider!!.chat(messages, fixOptions).content
                 } else {
                     throw e
@@ -336,65 +537,25 @@ class StreamScope {
         throw IllegalStateException("Unreachable")
     }
 
-    /**
-     * 清空当前活动记忆体的快捷方法。
-     */
+    // --- 记忆管理 DSL (保持不变) ---
+
     @Suppress("unused")
-    suspend fun clearMemory() {
-        StreamLLM.memory.clear()
-    }
+    suspend fun clearMemory() { StreamLLM.memory.clear() }
 
-    // --- 记忆管理 DSL ---
-
-    /**
-     * 创建并切换到新的记忆体。
-     *
-     * @param name 记忆体名称。
-     * @param system (可选) 该记忆体的 System Prompt。
-     */
     @Suppress("unused")
     suspend fun newMemory(name: String, system: String? = null) {
         StreamLLM.memory.createMemory(name, system)
         StreamLLM.memory.switchMemory(name)
     }
 
-    /**
-     * 切换到已存在的记忆体。
-     *
-     * @param name 记忆体名称。
-     */
     @Suppress("unused")
-    suspend fun switchMemory(name: String) {
-        StreamLLM.memory.switchMemory(name)
-    }
+    suspend fun switchMemory(name: String) { StreamLLM.memory.switchMemory(name) }
 
-    /**
-     * 删除指定的记忆体。
-     *
-     * @param name 记忆体名称。
-     */
     @Suppress("unused")
-    suspend fun deleteMemory(name: String) {
-        StreamLLM.memory.deleteMemory(name)
-    }
+    suspend fun deleteMemory(name: String) { StreamLLM.memory.deleteMemory(name) }
 
-    /**
-     * 更新指定记忆体的 System Prompt。
-     *
-     * @param name 记忆体名称。
-     * @param prompt 新的 System Prompt。
-     */
     @Suppress("unused")
     suspend fun setSystemPrompt(name: String, prompt: String) {
         StreamLLM.memory.updateSystemPrompt(name = name, prompt = prompt)
-    }
-
-    // --- 内部辅助方法 ---
-
-    private fun ChatContent.hasContent(): Boolean {
-        return when (this) {
-            is ChatContent.Text -> this.text.isNotBlank()
-            is ChatContent.Parts -> this.parts.isNotEmpty()
-        }
     }
 }
