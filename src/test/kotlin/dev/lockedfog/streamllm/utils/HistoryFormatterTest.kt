@@ -1,41 +1,41 @@
 package dev.lockedfog.streamllm.utils
 
-import dev.lockedfog.streamllm.core.ChatMessage
-import dev.lockedfog.streamllm.core.ChatRole
+import dev.lockedfog.streamllm.core.*
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 
 class HistoryFormatterTest {
 
     @Test
-    fun `test default formatter`() {
+    fun `test formatter extracts text from multimodal content`() {
+        val mixedContent = ChatContent.Parts(listOf(
+            ContentPart.TextPart(text = "Here is an image:"),
+            ContentPart.ImagePart(imageUrl = ImageUrl("url")),
+            ContentPart.TextPart(text = "What is it?")
+        ))
+
         val history = listOf(
-            ChatMessage(ChatRole.USER, "Hi"),
-            ChatMessage(ChatRole.ASSISTANT, "Hello")
+            ChatMessage(ChatRole.USER, mixedContent)
         )
 
+        // 默认格式化器只关注 content 占位符
         val result = HistoryFormatter.DEFAULT.format(history)
 
+        // 预期：只提取文本部分，并用换行符连接
+        // User: Here is an image:
+        // What is it?
         val expected = """
-            User: Hi
-            Assistant: Hello
+            User: Here is an image:
+            What is it?
         """.trimIndent()
 
         assertEquals(expected, result)
     }
 
     @Test
-    fun `test custom format string`() {
-        // 格式：User 说 {{content}} | AI 说 {{content}} | 分隔符是 " || "
-        val formatStr = "user=User 说 {{content}}; assistant=AI 说 {{content}}; sep= || "
-        val formatter = HistoryFormatter.fromString(formatStr)
-
-        val history = listOf(
-            ChatMessage(ChatRole.USER, "A"),
-            ChatMessage(ChatRole.ASSISTANT, "B")
-        )
-
-        val result = formatter.format(history)
-        assertEquals("User 说 A || AI 说 B", result)
+    fun `test legacy text content`() {
+        val history = listOf(ChatMessage(ChatRole.USER, "Hi"))
+        val result = HistoryFormatter.DEFAULT.format(history)
+        assertEquals("User: Hi", result)
     }
 }

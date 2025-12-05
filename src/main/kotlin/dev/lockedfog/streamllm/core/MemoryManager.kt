@@ -23,10 +23,30 @@ import kotlin.coroutines.cancellation.CancellationException
  *
  * 表示一条对话记录，包含角色和内容。
  *
- * @property role 消息发送者的角色 (User, Assistant, System)。
- * @property content 消息的文本内容。
+ * @property role 消息发送者的角色 (See also [ChatRole])。
+ * @property content 消息的内容（支持多模态）。
+ * @property name (可选) 消息发送者的名称（如工具函数名）。
+ * @property toolCalls (可选) Assistant 角色生成的工具调用请求列表。
+ * @property toolCallId (可选) Tool 角色回复时对应的 Call ID。
  */
-data class ChatMessage(val role: ChatRole, val content: String)
+data class ChatMessage(
+    val role: ChatRole,
+    val content: ChatContent,
+    val name: String? = null,
+    val toolCalls: List<ToolCall>? = null,
+    val toolCallId: String? = null
+) {
+    /**
+     * 辅助构造函数，兼容旧代码
+     *
+     * @param role 消息发送者的角色 [ChatRole]
+     * @param text 消息内容
+     */
+    constructor(role: ChatRole, text: String) : this(
+        role = role,
+        content = ChatContent.Text(text)
+    )
+}
 
 /**
  * 记忆策略枚举。
@@ -259,11 +279,11 @@ class MemoryManager(
         includeSystem: Boolean = true
     ): List<ChatMessage> {
         // 必须加锁读取，因为 accessOrder LRU 会修改链表
-        val context = cacheLock.withLock { cache[currentMemoryId] } ?: return emptyList()
+        val context = cacheLock.withLock { cache[currentMemoryId] }
 
         // 1. 处理窗口切片 (只针对 User/Assistant 对话历史)
         // 注意：需在锁外操作副本或确保线程安全，这里 messages 是 synchronizedList，所以还可以
-        val rawHistory = context.messages
+        val rawHistory = context?.messages ?: emptyList()
         val slicedHistory = when {
             windowSize < 0 -> rawHistory.toList() // 全部
             windowSize == 0 -> emptyList()        // 无历史
@@ -275,7 +295,7 @@ class MemoryManager(
         }
 
         // 2. 处理 System Prompt (临时覆盖 > 记忆体自带)
-        val activeSystem = tempSystem ?: context.systemPrompt
+        val activeSystem = tempSystem ?: context?.systemPrompt
 
         return if (!activeSystem.isNullOrBlank()) {
             listOf(ChatMessage(ChatRole.SYSTEM, activeSystem)) + slicedHistory

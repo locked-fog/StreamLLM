@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "com.github.locked-fog"
-version = "0.3.2"
+version = "0.3.4"
 
 repositories {
     mavenCentral()
@@ -47,7 +47,7 @@ publishing {
             from(components["java"])
             groupId = "com.github.locked-fog"
             artifactId = "stream-llm"
-            version = "0.3.2"
+            version = "0.3.4"
         }
     }
 }

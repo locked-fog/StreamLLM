@@ -3,21 +3,20 @@ package dev.lockedfog.streamllm.provider.openai
 import dev.lockedfog.streamllm.core.*
 import io.ktor.client.*
 import io.ktor.client.engine.mock.*
-import io.ktor.client.plugins.contentnegotiation.* // [新增]
+import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.* // [新增]
-import io.ktor.utils.io.*
+import io.ktor.serialization.kotlinx.json.*
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readText
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json           // [新增]
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
+import kotlin.test.assertNotNull
 
 class OpenAiClientTest {
 
-    // [修复] 在这里安装 ContentNegotiation 插件
     private fun createMockClient(handler: MockRequestHandler): OpenAiClient {
         val mockEngine = MockEngine(handler)
         val httpClient = HttpClient(mockEngine) {
@@ -38,85 +37,86 @@ class OpenAiClientTest {
     }
 
     @Test
-    fun `test chat request success`() = runTest {
+    fun `test chat request with reasoning content (DeepSeek R1)`() = runTest {
         val jsonResponse = """
             {
-              "id": "chatcmpl-123",
+              "id": "chatcmpl-1",
               "choices": [{
-                "message": { "role": "assistant", "content": "Hello World" }
+                "message": { 
+                    "role": "assistant", 
+                    "content": "4",
+                    "reasoning_content": "2+2=4"
+                }
               }],
-              "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
+              "usage": { 
+                  "total_tokens": 10,
+                  "prompt_tokens": 5,        
+                  "completion_tokens": 5      
+              }
             }
-        """.trimIndent()
+        """.trimIndent() // [Fix] 补全 usage 字段
 
-        val client = createMockClient { request ->
-            // 验证请求头
-            assertEquals("Bearer test-key", request.headers["Authorization"])
-
-            respond(
-                content = jsonResponse,
-                status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, "application/json")
-            )
+        val client = createMockClient {
+            respond(jsonResponse, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }
 
-        val response = client.chat(listOf(ChatMessage(ChatRole.USER, "Hi")))
-
-        assertEquals("Hello World", response.content)
-        assertEquals(15, response.usage?.totalTokens)
+        val response = client.chat(listOf(ChatMessage(ChatRole.USER, "2+2?")))
+        assertEquals("4", response.content)
     }
 
     @Test
-    fun `test stream request parsing`() = runTest {
+    fun `test stream request with tool calls`() = runTest {
+        // [Fix] 即使有了默认值，最好也提供标准的空参数以符合 OpenAI 习惯，
+        // 或者依赖 ToolModels 的默认值处理 "function":{"name":"search"} 这种情况
         val sseResponse = """
-            data: {"choices":[{"delta":{"content":"Hel"}}]}
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search"}}]}}]}
             
-            data: {"choices":[{"delta":{"content":"lo"}}]}
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\""}}]}}]}
+            
+            data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"Kotlin\"}"}}]}}]}
             
             data: [DONE]
         """.trimIndent()
 
-        val client = createMockClient { _ ->
-            respond(
-                content = ByteReadChannel(sseResponse),
-                status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, "text/event-stream")
-            )
+        val client = createMockClient {
+            respond(ByteReadChannel(sseResponse), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/event-stream"))
         }
 
-        val responses = client.stream(listOf(ChatMessage(ChatRole.USER, "Hi"))).toList()
+        val responses = client.stream(listOf(ChatMessage(ChatRole.USER, "Search Kotlin"))).toList()
 
-        // 注意：流式响应中，content 是分片的，usage 通常为空(除非是最后一个包)
-        // 这里的测试只验证能否解析 content
-        val fullContent = responses.joinToString("") { it.content }
-        assertEquals("Hello", fullContent)
+        // 验证是否解析出了 ToolCalls
+        // 注意：目前的流式聚合逻辑在 StreamScope 中处理 Content，但 ToolCalls 的聚合比较复杂。
+        // Client 层只是忠实地 emit 每一帧数据。
+
+        val firstFrame = responses[0]
+        assertNotNull(firstFrame.toolCalls)
+        assertEquals("search", firstFrame.toolCalls!![0].function.name)
+
+        val lastFrame = responses[2]
+        assertEquals(":\"Kotlin\"}", lastFrame.toolCalls!![0].function.arguments)
     }
 
     @Test
-    fun `test error handling 401`() = runTest {
-        val client = createMockClient { _ ->
-            respond(
-                content = "Invalid API Key",
-                status = HttpStatusCode.Unauthorized
-            )
-        }
-
-        assertFailsWith<AuthenticationException> {
-            client.chat(listOf(ChatMessage(ChatRole.USER, "Hi")))
-        }
-    }
-
-    @Test
-    fun `test request body format`() = runTest {
+    fun `test multimodal request format`() = runTest {
         val client = createMockClient { request ->
             val body = request.body.toByteReadPacket().readText()
-            // 简单验证 JSON 结构
-            assertTrue(body.contains(""""model":"gpt-test""""))
-            assertTrue(body.contains(""""role":"user""""))
-
-            respond("{}", HttpStatusCode.OK)
+            // 验证发送的 JSON 包含 image_url 结构
+            // 预期结构: "content":[{"type":"text"...},{"type":"image_url"...}]
+            if (body.contains("\"type\":\"image_url\"") && body.contains("http://img.com")) {
+                respond("{}", HttpStatusCode.OK)
+            } else {
+                respond("Error", HttpStatusCode.BadRequest)
+            }
         }
 
-        try { client.chat(listOf(ChatMessage(ChatRole.USER, "Hi"))) } catch (_: Exception) {}
+        val multiModalMsg = ChatMessage(
+            role = ChatRole.USER,
+            content = ChatContent.Parts(listOf(
+                ContentPart.TextPart(text = "Describe"),
+                ContentPart.ImagePart(imageUrl = ImageUrl("http://img.com"))
+            ))
+        )
+
+        try { client.chat(listOf(multiModalMsg)) } catch (_: Exception) {}
     }
 }

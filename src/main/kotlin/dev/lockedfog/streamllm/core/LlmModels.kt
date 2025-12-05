@@ -9,10 +9,14 @@ import kotlinx.serialization.Serializable
  *
  * @property content 模型生成的文本内容。在流式传输中，这可能是一个片段。
  * @property usage Token 用量统计信息。通常只在完整响应或流式响应的最后一个包中存在，其他情况可能为 null。
+ * @property reasoningContent (DeepSeek R1/Siliconflow) 模型生成的思维链/推理内容。
+ * @property toolCalls (Tool Calling) 模型生成的工具调用请求。
  */
 data class LlmResponse(
     val content: String,
-    val usage: Usage? = null
+    val usage: Usage? = null,
+    val reasoningContent: String? = null,
+    val toolCalls: List<ToolCall>? = null
 )
 
 /**

@@ -1,6 +1,7 @@
 package dev.lockedfog.streamllm.integration
 
 import dev.lockedfog.streamllm.StreamLLM
+import dev.lockedfog.streamllm.core.ChatContent
 import dev.lockedfog.streamllm.core.memory.InMemoryStorage
 import dev.lockedfog.streamllm.dsl.stream
 import kotlinx.coroutines.delay
@@ -8,6 +9,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
@@ -64,7 +66,11 @@ class RealApiIntegrationTest {
 
         // 应该有 2 条消息：User 提问 + AI 回复
         assertEquals(2, messages.size, "Storage should contain 2 messages (User + AI)")
-        assertEquals("Hello, are you online? Answer YES or NO.", messages[0].content)
+
+        // [Fix] 验证内容时需适配 ChatContent
+        val userMsgContent = messages[0].content
+        assertIs<ChatContent.Text>(userMsgContent)
+        assertEquals("Hello, are you online? Answer YES or NO.", userMsgContent.text)
 
         println("=== End Real Chat ===")
     }

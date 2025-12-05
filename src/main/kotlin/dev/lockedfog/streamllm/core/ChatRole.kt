@@ -28,7 +28,13 @@ enum class ChatRole(val value: String) {
      * 系统角色。通常用于设定 LLM 的行为模式、人设或上下文约束。
      */
     @SerialName("system")
-    SYSTEM("system");
+    SYSTEM("system"),
+
+    /**
+     * 工具角色，用于向模型提交工具执行的结果
+     */
+    @SerialName("tool")
+    TOOL("tool");
 
     override fun toString(): String = value
 }

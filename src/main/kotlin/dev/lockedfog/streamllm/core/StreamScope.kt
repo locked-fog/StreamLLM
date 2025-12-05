@@ -75,10 +75,12 @@ class StreamScope {
                 val historyText = historyFormatter.format(historyList)
                 finalInput = finalInput.replace("{{history}}", historyText)
 
-                val activeSystem = system ?: StreamLLM.memory.getCurrentHistory(0, null, true)
+                val memorySystem = StreamLLM.memory.getCurrentHistory(0, null, true)
                     .firstOrNull { it.role == ChatRole.SYSTEM }?.content
-                if (!activeSystem.isNullOrBlank()) {
-                    messagesToSend.add(ChatMessage(ChatRole.SYSTEM, activeSystem))
+                val activeSystemContent = if (system != null) ChatContent.Text(system) else memorySystem
+
+                if (activeSystemContent != null && activeSystemContent.hasContent()) {
+                    messagesToSend.add(ChatMessage(ChatRole.SYSTEM, activeSystemContent))
                 }
             }
         }
@@ -88,10 +90,13 @@ class StreamScope {
             val history = StreamLLM.memory.getCurrentHistory(windowSize = historyWindow, tempSystem = system, includeSystem = true)
             messagesToSend.addAll(history)
         } else if (!promptTemplate.contains("{{history}}")) {
-            val activeSystem = system ?: StreamLLM.memory.getCurrentHistory(0, null, true)
+            val memorySystem = StreamLLM.memory.getCurrentHistory(0, null, true)
                 .firstOrNull { it.role == ChatRole.SYSTEM }?.content
-            if (!activeSystem.isNullOrBlank()) {
-                messagesToSend.add(ChatMessage(ChatRole.SYSTEM, activeSystem))
+
+            val activeSystemContent = if (system != null) ChatContent.Text(system) else memorySystem
+
+            if (activeSystemContent != null && activeSystemContent.hasContent()) {
+                messagesToSend.add(ChatMessage(ChatRole.SYSTEM, activeSystemContent))
             }
         }
 
@@ -382,5 +387,14 @@ class StreamScope {
     @Suppress("unused")
     suspend fun setSystemPrompt(name: String, prompt: String) {
         StreamLLM.memory.updateSystemPrompt(name = name, prompt = prompt)
+    }
+
+    // --- 内部辅助方法 ---
+
+    private fun ChatContent.hasContent(): Boolean {
+        return when (this) {
+            is ChatContent.Text -> this.text.isNotBlank()
+            is ChatContent.Parts -> this.parts.isNotEmpty()
+        }
     }
 }

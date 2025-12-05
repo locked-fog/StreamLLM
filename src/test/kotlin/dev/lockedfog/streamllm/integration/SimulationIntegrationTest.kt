@@ -1,6 +1,7 @@
 package dev.lockedfog.streamllm.integration
 
 import dev.lockedfog.streamllm.StreamLLM
+import dev.lockedfog.streamllm.core.ChatContent
 import dev.lockedfog.streamllm.core.ServerException
 import dev.lockedfog.streamllm.core.memory.InMemoryStorage
 import dev.lockedfog.streamllm.dsl.stream
@@ -62,22 +63,34 @@ class SimulationIntegrationTest {
             val bodyString = request.body.toByteReadPacket().readText()
             val chatReq = jsonParser.decodeFromString<OpenAiChatRequest>(bodyString)
             val messages = chatReq.messages
-            val lastMsg = messages.last().content
+
+            // [Fix] content 现在是 ChatContent 类型，需提取文本
+            val lastMsgContent = messages.last().content
+            val lastMsgText = when (lastMsgContent) {
+                is ChatContent.Text -> lastMsgContent.text
+                is ChatContent.Parts -> "" // 测试用例只涉及纯文本
+            }
 
             val responseContent = when {
-                lastMsg == "Hi" -> {
+                lastMsgText == "Hi" -> {
                     // Round 1 验证：应该只有 1 条消息 (User) + System(可选)
                     if (messages.count { it.role.name == "USER" } != 1) error("Round 1 history error")
                     "Hello"
                 }
-                lastMsg == "My name is Key" -> {
+                lastMsgText == "My name is Key" -> {
                     // Round 2 验证：应该有 3 条消息 (User, Asst, User)
                     if (messages.size < 3) error("Round 2 history missing")
                     "OK"
                 }
-                lastMsg == "Who am I?" -> {
+                lastMsgText == "Who am I?" -> {
                     // Round 3 验证：历史中应包含名字
-                    val historyStr = messages.joinToString { it.content }
+                    // [Fix] 验证历史记录时也要处理 ChatContent
+                    val historyStr = messages.joinToString {
+                        when(val c = it.content) {
+                            is ChatContent.Text -> c.text
+                            else -> ""
+                        }
+                    }
                     if (!historyStr.contains("My name is Key")) error("Context lost")
                     "Key"
                 }

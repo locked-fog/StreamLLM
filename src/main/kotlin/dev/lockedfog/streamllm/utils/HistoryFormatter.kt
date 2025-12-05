@@ -1,6 +1,8 @@
 package dev.lockedfog.streamllm.utils
 
+import dev.lockedfog.streamllm.core.ChatContent
 import dev.lockedfog.streamllm.core.ChatMessage
+import dev.lockedfog.streamllm.core.ContentPart
 
 /**
  * 历史记录格式化器接口。
@@ -88,7 +90,14 @@ class SimpleFormatter(
             val template = roleTemplates[msg.role.value]
                 ?: return@mapNotNull null
 
-            template.replace("{{content}}", msg.content)
+            val textContent = when (val c = msg.content) {
+                is ChatContent.Text -> c.text
+                is ChatContent.Parts -> c.parts
+                    .filterIsInstance<ContentPart.TextPart>()
+                    .joinToString("\n") { it.text }
+            }
+
+            template.replace("{{content}}",textContent)
         }.joinToString(separator)
     }
 }

@@ -1,6 +1,8 @@
 package dev.lockedfog.streamllm.provider.openai
 
+import dev.lockedfog.streamllm.core.ChatContent
 import dev.lockedfog.streamllm.core.ChatRole
+import dev.lockedfog.streamllm.core.ToolCall
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -35,7 +37,13 @@ data class OpenAiMessage(
     /** 角色 */
     val role: ChatRole,
     /** 内容 */
-    val content: String
+    val content: ChatContent,
+    /** 名称（可选） */
+    val name: String? = null,
+    /** 工具调用（可选） */
+    @SerialName("tool_calls") val toolCalls: List<ToolCall>? = null,
+    /** 工具调用ID（可选） */
+    @SerialName("tool_call_id") val toolCallId: String? = null
 )
 
 // --- 响应包 (Response - 非流式) ---
@@ -70,10 +78,18 @@ data class OpenAiStreamChunk(
     val error: OpenAiError? = null
 ) {
     @Serializable
-    data class StreamChoice(val delta: Delta)
+    data class StreamChoice(
+        val delta: Delta,
+        /** 停止原因 */
+        @SerialName("finish_reason") val finishReason: String? = null
+    )
 
     @Serializable
-    data class Delta(val content: String? = null)
+    data class Delta(
+        val content: String? = null,
+        @SerialName("reasoning_content") val reasoningContent: String? = null,
+        @SerialName("tool_calls") val toolCalls: List<ToolCall>? = null
+    )
 }
 
 // --- OpenAI 格式的 Usage ---

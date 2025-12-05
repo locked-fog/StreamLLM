@@ -78,7 +78,15 @@ class OpenAiClient(
     }
 
     private fun createRequest(messages: List<ChatMessage>, stream: Boolean, options: GenerationOptions?): OpenAiChatRequest {
-        val openAiMessages = messages.map { OpenAiMessage(it.role, it.content) }
+        val openAiMessages = messages.map {
+            OpenAiMessage(
+                role = it.role,
+                content = it.content,
+                name = it.name,
+                toolCalls = it.toolCalls,
+                toolCallId = it.toolCallId
+            )
+        }
         return OpenAiChatRequest(
             model = options?.modelNameOverride ?: defaultModel,
             messages = openAiMessages,
@@ -140,10 +148,22 @@ class OpenAiClient(
         }
 
         val chatResponse = response.body<OpenAiChatResponse>()
-        val content = chatResponse.choices.firstOrNull()?.message?.content ?: ""
+        val choice = chatResponse.choices.firstOrNull()
+
+        val contentString = when(val rawContent = choice?.message?.content){
+            is ChatContent.Text -> rawContent.text
+            is ChatContent.Parts -> rawContent.parts
+                .filterIsInstance<ContentPart.TextPart>()
+                .joinToString("") { it.text }
+            null -> ""
+        }
         val usage = chatResponse.usage?.toUsage()
 
-        return LlmResponse(content, usage)
+        return LlmResponse(
+            content = contentString,
+            usage = usage,
+            toolCalls = choice?.message?.toolCalls
+        )
     }
 
     // --- 实现 Stream ---
@@ -181,10 +201,22 @@ class OpenAiClient(
                             }
 
                             // 1. 发送内容
-                            val content = chunk.choices?.firstOrNull()?.delta?.content
-                            if (!content.isNullOrEmpty()) {
-                                emit(LlmResponse(content = content, usage = null))
+                            val delta = chunk.choices?.firstOrNull()?.delta
+                            if (delta != null) {
+                                val content = delta.content ?: ""
+                                val reasoning = delta.reasoningContent
+                                val toolCalls = delta.toolCalls
+
+                                if (content.isNotEmpty() || reasoning != null || toolCalls != null){
+                                    emit(LlmResponse(
+                                        content = content,
+                                        usage = null,
+                                        reasoningContent = reasoning,
+                                        toolCalls = toolCalls
+                                    ))
+                                }
                             }
+
 
                             // 2. 发送 Usage (通常在最后一个 Chunk)
                             if (chunk.usage != null) {
