@@ -135,6 +135,7 @@ class MemoryManager(
     +     * 预加载指定的记忆体到缓存中。
     +     * 建议在切换会话前（如列表点击事件）调用。
     +     */
+    @Suppress("unused")
     suspend fun preLoad(memoryId: String) {
         val needsLoad = cacheLock.withLock { !cache.containsKey(memoryId) }
         if (needsLoad) {

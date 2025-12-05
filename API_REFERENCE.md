@@ -18,7 +18,7 @@
   - [核心方法 (Request)](#核心方法-request)
     - [`ask` / `stream` (纯文本)](#ask--stream-纯文本)
     - [`ask` / `stream` (多模态)](#ask--stream-多模态)
-    - [`ask<T>` (结构化输出)](#askt-结构化输出)
+    - [`ask<T>` (结构化输出)](#askt-structured-output)
 - [3. 数据模型 (Data Models)](#3-数据模型-data-models)
   - [`ChatMessage` (消息体)](#chatmessage-消息体)
   - [`ChatContent` (多模态内容)](#chatcontent-多模态内容)

@@ -1,11 +1,8 @@
 package dev.lockedfog.streamllm.core
 
 import dev.lockedfog.streamllm.StreamLLM
-import dev.lockedfog.streamllm.provider.openai.OpenAiChatRequest
 import dev.lockedfog.streamllm.provider.openai.OpenAiMessage
 import dev.lockedfog.streamllm.provider.openai.OpenAiStreamChunk
-import dev.lockedfog.streamllm.provider.openai.OpenAiUsage
-import kotlinx.serialization.encodeToString
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs

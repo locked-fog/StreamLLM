@@ -90,7 +90,7 @@ class OpenAiClientTest {
 
         val firstFrame = responses[0]
         assertNotNull(firstFrame.toolCalls)
-        assertEquals("search", firstFrame.toolCalls!![0].function.name)
+        assertEquals("search", firstFrame.toolCalls[0].function.name)
 
         val lastFrame = responses[2]
         assertEquals(":\"Kotlin\"}", lastFrame.toolCalls!![0].function.arguments)

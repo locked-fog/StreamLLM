@@ -3,8 +3,9 @@ package dev.lockedfog.streamllm.core
 import dev.lockedfog.streamllm.StreamLLM
 import dev.lockedfog.streamllm.dsl.stream
 import dev.lockedfog.streamllm.provider.LlmProvider
-import io.mockk.*
-import kotlinx.coroutines.flow.flow
+import io.mockk.coEvery
+import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -60,6 +61,6 @@ class StreamScopeTest {
         val sysMsg = msgs[0]
         assertEquals(ChatRole.SYSTEM, sysMsg.role)
         assertIs<ChatContent.Text>(sysMsg.content)
-        assertEquals("You are AI", (sysMsg.content as ChatContent.Text).text)
+        assertEquals("You are AI", sysMsg.content.text)
     }
 }

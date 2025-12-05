@@ -6,7 +6,6 @@ import dev.lockedfog.streamllm.core.ChatRole
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 class InMemoryStorageTest {

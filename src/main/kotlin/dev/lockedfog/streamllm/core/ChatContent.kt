@@ -37,7 +37,6 @@ sealed interface ChatContent {
 /**
  * 多模态内容的组成片段。
  *
- * [Fix] 移除了显式的 `type` 属性，交由 kotlinx.serialization 的多态机制自动处理。
  * JSON 输出中仍然会包含 "type": "text/image_url/..." 字段，值取决于 @SerialName。
  */
 @Serializable
@@ -65,6 +64,7 @@ sealed interface ContentPart {
     /**
      * 音频片段 (Qwen-Omni 等模型支持)。
      */
+    @Suppress("unused")
     @Serializable
     @SerialName("audio_url")
     data class AudioPart(
@@ -74,6 +74,7 @@ sealed interface ContentPart {
     /**
      * 视频片段 (Qwen-VL/Omni 等模型支持)。
      */
+    @Suppress("unused")
     @Serializable
     @SerialName("video_url")
     data class VideoPart(

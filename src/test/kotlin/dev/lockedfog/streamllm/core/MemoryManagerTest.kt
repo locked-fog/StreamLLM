@@ -31,6 +31,6 @@ class MemoryManagerTest {
         val msg = history[0]
 
         assertIs<ChatContent.Text>(msg.content)
-        assertEquals("Hello", (msg.content as ChatContent.Text).text)
+        assertEquals("Hello", msg.content.text)
     }
 }
